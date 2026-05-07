@@ -134,6 +134,14 @@ python scripts\extract_estimate_items.py
 python scripts\build_estimate_search_workbook.py
 ```
 
+원본 재추출과 검색용 엑셀 생성을 한 번에 실행한다.
+
+```powershell
+python scripts\update_estimate_database.py
+```
+
+추출기는 `data/processed/estimate_extract_cache.json` 캐시를 사용한다. 같은 파일은 다시 열지 않고, 새로 추가되거나 수정된 견적서만 다시 읽는다.
+
 터미널에서 바로 검색한다.
 
 ```powershell
@@ -149,3 +157,55 @@ data/processed/estimate_search.xlsx
 ```
 
 `견적품목검색` 시트에서 `Ctrl+F` 또는 필터를 사용해 부품명, 업체명, 수신, 참조, 단가를 찾는다.
+
+## 앞으로 새 견적서를 쌓는 방법
+
+새 견적서를 만들거나 받은 뒤에는 원본 파일을 아래 폴더에 복사한다.
+
+```text
+data/raw_estimates/견적서
+```
+
+업체가 분명하면 업체별 폴더에 넣는다.
+
+```text
+data/raw_estimates/견적서/케이제이씨
+data/raw_estimates/견적서/스마트라이프텍
+data/raw_estimates/견적서/성우
+```
+
+업체가 애매하면 일단 `견적서` 바로 아래에 넣고, 나중에 정리한다.
+
+파일명은 검색 품질에 영향을 주므로 아래 형식을 권장한다.
+
+```text
+YYYYMMDD_업체명_담당자_핵심부품_수량.xlsx
+```
+
+예:
+
+```text
+20260507_케이제이씨_최선현팀장_12400F_5060_30대.xlsx
+20260507_스마트라이프텍_최지웅_P310_1TB_5대.xlsx
+```
+
+파일을 추가한 뒤에는 아래 명령으로 데이터와 검색 엑셀을 갱신한다.
+
+```powershell
+python scripts\update_estimate_database.py
+```
+
+그러면 아래 파일이 최신 상태가 된다.
+
+```text
+data/processed/estimate_items.csv
+data/processed/estimate_files.csv
+data/processed/estimate_search.xlsx
+```
+
+중요:
+
+- 원본 견적서는 `data/raw_estimates/`에 보관한다.
+- 원본 파일을 직접 수정하지 않는다.
+- 검색용 파일은 `data/processed/estimate_search.xlsx`를 사용한다.
+- GitHub에는 원본 견적서와 처리 결과를 올리지 않는다.

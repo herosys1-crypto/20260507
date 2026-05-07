@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,46 @@ from openpyxl import load_workbook
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_ROOT = PROJECT_ROOT / "data" / "raw_estimates"
 PROCESSED_ROOT = PROJECT_ROOT / "data" / "processed"
+CACHE_PATH = PROCESSED_ROOT / "estimate_extract_cache.json"
+
+LABEL_RECIPIENT = "\uc218\uc2e0"
+LABEL_ATTENTION = "\ucc38\uc870"
+LABEL_QUOTE_TITLE = "\uacac\uc801\uba85"
+LABEL_QUOTE_DATE = "\uc77c\uc790"
+
+
+ITEM_FIELDS = [
+    "source_path",
+    "source_file",
+    "source_folder",
+    "customer_hint",
+    "quote_date",
+    "recipient",
+    "attention",
+    "quote_title",
+    "sheet_name",
+    "item_no",
+    "item_category",
+    "part_name",
+    "spec",
+    "quantity",
+    "unit",
+    "quoted_unit_price",
+    "amount",
+    "normalized_part_key",
+]
+
+FILE_FIELDS = [
+    "source_path",
+    "source_file",
+    "source_folder",
+    "customer_hint",
+    "file_extension",
+    "file_modified_at",
+    "status",
+    "item_count",
+    "note",
+]
 
 
 def clean(value: Any) -> str:
@@ -29,14 +70,12 @@ def parse_number(value: Any) -> str:
         if float(value).is_integer():
             return str(int(value))
         return str(value)
-    text = clean(value).replace(",", "")
-    return text
+    return clean(value).replace(",", "")
 
 
 def normalize_key(*parts: str) -> str:
-    text = " ".join(p for p in parts if p)
-    text = text.lower()
-    text = re.sub(r"[^0-9a-zA-Z가-힣]+", " ", text)
+    text = " ".join(p for p in parts if p).lower()
+    text = re.sub(r"[^0-9a-zA-Z\uac00-\ud7a3]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -49,6 +88,45 @@ def date_from_filename(name: str) -> str:
         return datetime(int(year), int(month), int(day)).date().isoformat()
     except ValueError:
         return ""
+
+
+def file_signature(path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "suffix": path.suffix.lower(),
+    }
+
+
+def make_file_record(path: Path, status: str = "ok", note: str = "", item_count: int = 0) -> dict[str, str]:
+    rel_path = path.relative_to(RAW_ROOT)
+    folder_parts = rel_path.parts[:-1]
+    return {
+        "source_path": str(rel_path),
+        "source_file": path.name,
+        "source_folder": "\\".join(folder_parts),
+        "customer_hint": folder_parts[-1] if folder_parts else "",
+        "file_extension": path.suffix.lower(),
+        "file_modified_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
+        "status": status,
+        "item_count": str(item_count),
+        "note": note,
+    }
+
+
+def load_cache() -> dict[str, Any]:
+    if CACHE_PATH.exists():
+        with CACHE_PATH.open("r", encoding="utf-8") as file:
+            return json.load(file)
+    return {"version": 1, "files": {}}
+
+
+def save_cache(cache: dict[str, Any]) -> None:
+    tmp_path = CACHE_PATH.with_suffix(".tmp")
+    with tmp_path.open("w", encoding="utf-8") as file:
+        json.dump(cache, file, ensure_ascii=False)
+    tmp_path.replace(CACHE_PATH)
 
 
 def find_label_value(ws, label: str, max_row: int = 20, max_col: int = 10) -> str:
@@ -68,10 +146,9 @@ def find_quote_date(ws) -> str:
     for row in range(1, min(ws.max_row, 20) + 1):
         for col in range(1, min(ws.max_column, 10) + 1):
             value = clean(ws.cell(row, col).value).replace(" ", "")
-            if value in {"일자", "일자:"}:
+            if value in {LABEL_QUOTE_DATE, f"{LABEL_QUOTE_DATE}:"}:
                 for offset in range(1, 5):
-                    candidate = ws.cell(row, col + offset).value
-                    text = clean(candidate)
+                    text = clean(ws.cell(row, col + offset).value)
                     if text:
                         return text
     return ""
@@ -80,36 +157,22 @@ def find_quote_date(ws) -> str:
 def find_header(ws) -> tuple[int, int] | None:
     for row in range(1, min(ws.max_row, 60) + 1):
         for col in range(1, min(ws.max_column, 20) + 1):
-            value = clean(ws.cell(row, col).value)
-            if value == "No.":
+            if clean(ws.cell(row, col).value) == "No.":
                 return row, col
     return None
 
 
 def extract_xlsx(path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
     rows: list[dict[str, str]] = []
-    rel_path = str(path.relative_to(RAW_ROOT))
-    folder_parts = path.relative_to(RAW_ROOT).parts[:-1]
+    rel_path = path.relative_to(RAW_ROOT)
+    folder_parts = rel_path.parts[:-1]
     customer_hint = folder_parts[-1] if folder_parts else ""
-
-    file_record = {
-        "source_path": rel_path,
-        "source_file": path.name,
-        "source_folder": "\\".join(folder_parts),
-        "customer_hint": customer_hint,
-        "file_extension": path.suffix.lower(),
-        "file_modified_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
-        "status": "ok",
-        "item_count": "0",
-        "note": "",
-    }
+    file_record = make_file_record(path)
 
     try:
         workbook = load_workbook(path, data_only=True, read_only=True)
     except Exception as exc:
-        file_record["status"] = "error"
-        file_record["note"] = f"{type(exc).__name__}: {exc}"
-        return rows, file_record
+        return rows, make_file_record(path, status="error", note=f"{type(exc).__name__}: {exc}")
 
     try:
         for ws in workbook.worksheets:
@@ -118,9 +181,9 @@ def extract_xlsx(path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
                 continue
 
             header_row, no_col = header
-            recipient = find_label_value(ws, "수신")
-            attention = find_label_value(ws, "참조")
-            quote_title = find_label_value(ws, "견적명")
+            recipient = find_label_value(ws, LABEL_RECIPIENT)
+            attention = find_label_value(ws, LABEL_ATTENTION)
+            quote_title = find_label_value(ws, LABEL_QUOTE_TITLE)
             quote_date = find_quote_date(ws) or date_from_filename(path.name)
 
             for row_num in range(header_row + 1, min(ws.max_row, 300) + 1):
@@ -132,14 +195,12 @@ def extract_xlsx(path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
                 unit_price = parse_number(ws.cell(row_num, no_col + 5).value)
                 amount = parse_number(ws.cell(row_num, no_col + 6).value)
 
-                if not item_no.isdigit():
-                    continue
-                if not item_category and not spec:
+                if not item_no.isdigit() or (not item_category and not spec):
                     continue
 
                 rows.append(
                     {
-                        "source_path": rel_path,
+                        "source_path": str(rel_path),
                         "source_file": path.name,
                         "source_folder": "\\".join(folder_parts),
                         "customer_hint": customer_hint,
@@ -162,86 +223,104 @@ def extract_xlsx(path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
     finally:
         workbook.close()
 
+    status = "ok" if rows else "no_items"
+    file_record["status"] = status
     file_record["item_count"] = str(len(rows))
-    if not rows:
-        file_record["status"] = "no_items"
     return rows, file_record
+
+
+def get_cached(cache: dict[str, Any], path: Path) -> tuple[list[dict[str, str]], dict[str, str]] | None:
+    rel_path = str(path.relative_to(RAW_ROOT))
+    entry = cache.get("files", {}).get(rel_path)
+    if not entry:
+        return None
+    if entry.get("signature") != file_signature(path):
+        return None
+    return entry.get("items", []), entry.get("record", make_file_record(path))
+
+
+def put_cached(
+    cache: dict[str, Any],
+    path: Path,
+    items: list[dict[str, str]],
+    record: dict[str, str],
+) -> None:
+    rel_path = str(path.relative_to(RAW_ROOT))
+    cache.setdefault("files", {})[rel_path] = {
+        "signature": file_signature(path),
+        "items": items,
+        "record": record,
+    }
+
+
+def extract_path(path: Path, cache: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, str], bool]:
+    cached = get_cached(cache, path)
+    if cached:
+        items, record = cached
+        return items, record, True
+
+    suffix = path.suffix.lower()
+    if suffix == ".xlsx":
+        items, record = extract_xlsx(path)
+    elif suffix in {".xls", ".xlsm", ".csv"}:
+        items = []
+        record = make_file_record(
+            path,
+            status="unsupported_pending",
+            note="The first extraction pass handles .xlsx files only.",
+        )
+    else:
+        items = []
+        record = make_file_record(path, status="ignored", note="Unsupported file extension.")
+
+    put_cached(cache, path, items, record)
+    return items, record, False
+
+
+def write_csv(path: Path, fields: list[str], rows: list[dict[str, str]]) -> None:
+    with path.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def main() -> None:
     PROCESSED_ROOT.mkdir(parents=True, exist_ok=True)
 
-    item_fields = [
-        "source_path",
-        "source_file",
-        "source_folder",
-        "customer_hint",
-        "quote_date",
-        "recipient",
-        "attention",
-        "quote_title",
-        "sheet_name",
-        "item_no",
-        "item_category",
-        "part_name",
-        "spec",
-        "quantity",
-        "unit",
-        "quoted_unit_price",
-        "amount",
-        "normalized_part_key",
-    ]
-    file_fields = [
-        "source_path",
-        "source_file",
-        "source_folder",
-        "customer_hint",
-        "file_extension",
-        "file_modified_at",
-        "status",
-        "item_count",
-        "note",
-    ]
-
+    cache = load_cache()
     all_items: list[dict[str, str]] = []
     file_records: list[dict[str, str]] = []
+    cache_hits = 0
+    processed = 0
 
+    current_paths = set()
     for path in sorted(RAW_ROOT.rglob("*")):
         if not path.is_file() or path.name.startswith("~$"):
             continue
-        suffix = path.suffix.lower()
-        if suffix == ".xlsx":
-            items, record = extract_xlsx(path)
-            all_items.extend(items)
-            file_records.append(record)
-        elif suffix in {".xls", ".xlsm", ".csv"}:
-            rel_path = str(path.relative_to(RAW_ROOT))
-            folder_parts = path.relative_to(RAW_ROOT).parts[:-1]
-            file_records.append(
-                {
-                    "source_path": rel_path,
-                    "source_file": path.name,
-                    "source_folder": "\\".join(folder_parts),
-                    "customer_hint": folder_parts[-1] if folder_parts else "",
-                    "file_extension": suffix,
-                    "file_modified_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
-                    "status": "unsupported_pending",
-                    "item_count": "0",
-                    "note": "1차 추출기는 .xlsx만 처리합니다.",
-                }
-            )
+        if path.suffix.lower() not in {".xlsx", ".xls", ".xlsm", ".csv"}:
+            continue
 
-    with (PROCESSED_ROOT / "estimate_items.csv").open("w", newline="", encoding="utf-8-sig") as file:
-        writer = csv.DictWriter(file, fieldnames=item_fields)
-        writer.writeheader()
-        writer.writerows(all_items)
+        rel_path = str(path.relative_to(RAW_ROOT))
+        current_paths.add(rel_path)
+        items, record, was_cached = extract_path(path, cache)
+        all_items.extend(items)
+        file_records.append(record)
+        if was_cached:
+            cache_hits += 1
+        else:
+            processed += 1
 
-    with (PROCESSED_ROOT / "estimate_files.csv").open("w", newline="", encoding="utf-8-sig") as file:
-        writer = csv.DictWriter(file, fieldnames=file_fields)
-        writer.writeheader()
-        writer.writerows(file_records)
+    for rel_path in list(cache.get("files", {}).keys()):
+        if rel_path not in current_paths:
+            del cache["files"][rel_path]
+
+    write_csv(PROCESSED_ROOT / "estimate_items.csv", ITEM_FIELDS, all_items)
+    write_csv(PROCESSED_ROOT / "estimate_files.csv", FILE_FIELDS, file_records)
+    save_cache(cache)
 
     print(f"files scanned: {len(file_records)}")
+    print(f"cache hits: {cache_hits}")
+    print(f"files processed: {processed}")
     print(f"items extracted: {len(all_items)}")
     print(f"output: {PROCESSED_ROOT}")
 
