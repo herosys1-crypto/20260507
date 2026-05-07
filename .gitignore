@@ -43,3 +43,8 @@ Thumbs.db
 *.sqlite3
 *.db
 
+# Estimate source files and generated outputs
+data/raw_estimates/
+data/processed/
+data/exports/
+
