@@ -136,6 +136,34 @@ function partFilterMatches(row, partValue) {
   return filter.aliases.some((alias) => haystack.includes(normalize(alias)));
 }
 
+function parsePartQueries(value) {
+  try {
+    const parsed = JSON.parse(String(value || "{}"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .map(([part, query]) => [part, String(query || "").trim()])
+        .filter(([part, query]) => part && query),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function scorePartQueries(row, partQueries) {
+  const entries = Object.entries(partQueries);
+  if (!entries.length) return 0;
+
+  let best = 0;
+  for (const [part, query] of entries) {
+    if (!partFilterMatches(row, part)) continue;
+    const groups = queryGroups(query);
+    const queryScore = scoreQuery(row, groups);
+    if (queryScore > 0) best = Math.max(best, queryScore + 100);
+  }
+  return best;
+}
+
 function json(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -317,6 +345,33 @@ function page(res) {
     }
     .stat b { display: block; margin-top: 4px; font-size: 19px; }
     .hint { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .part-grid {
+      display: grid;
+      gap: 4px;
+      max-height: 330px;
+      overflow: auto;
+      padding: 6px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+    .part-row {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr);
+      gap: 6px;
+      align-items: center;
+    }
+    .part-row span {
+      font-size: 12px;
+      font-weight: 700;
+      color: #263840;
+      white-space: nowrap;
+    }
+    .part-row input {
+      height: 29px;
+      padding: 5px 7px;
+      font-size: 12px;
+    }
     .pill {
       display: inline-block;
       padding: 2px 7px;
@@ -451,8 +506,8 @@ function page(res) {
       <input id="q" autofocus />
       <label id="customerLabel" for="customer"></label>
       <select id="customer"><option value="" id="allCustomer"></option></select>
-      <label id="partLabel" for="partFilter"></label>
-      <select id="partFilter"><option value="" id="allPart"></option></select>
+      <label id="partLabel"></label>
+      <div class="part-grid" id="partFilters"></div>
       <label id="categoryLabel" for="category"></label>
       <select id="category"><option value="" id="allCategory"></option></select>
       <label id="limitLabel" for="limit"></label>
@@ -518,7 +573,8 @@ function page(res) {
       qLabel: "\\uac80\\uc0c9\\uc5b4",
       qPlaceholder: "\\uc608: 5060, 12400F \\ucf00\\uc774\\uc81c\\uc774\\uc528, \\ub9c8\\uc774\\ud06c\\ub860 1TB, 12700 z790",
       customerLabel: "\\uc5c5\\uccb4/\\ud3f4\\ub354",
-      partLabel: "\\ubd80\\ud488\\ubcc4 \\ud544\\ud130",
+      partLabel: "\\ubd80\\ud488\\ubcc4 \\uac80\\uc0c9",
+      partPlaceholder: "\\ubd80\\ud488\\uba85",
       categoryLabel: "\\ud488\\ubaa9",
       all: "\\uc804\\uccb4",
       limitLabel: "\\ud45c\\uc2dc \\uac1c\\uc218",
@@ -561,7 +617,7 @@ function page(res) {
     const els = {
       q: document.querySelector("#q"),
       customer: document.querySelector("#customer"),
-      partFilter: document.querySelector("#partFilter"),
+      partFilters: document.querySelector("#partFilters"),
       category: document.querySelector("#category"),
       limit: document.querySelector("#limit"),
       rows: document.querySelector("#rows"),
@@ -598,7 +654,6 @@ function page(res) {
       setText("partLabel", T.partLabel);
       setText("categoryLabel", T.categoryLabel);
       setText("allCustomer", T.all);
-      setText("allPart", T.all);
       setText("allCategory", T.all);
       setText("limitLabel", T.limitLabel);
       setText("search", T.search);
@@ -656,20 +711,39 @@ function page(res) {
       select.appendChild(node);
     }
 
+    function partQueries() {
+      const queries = {};
+      els.partFilters.querySelectorAll("input[data-part]").forEach((input) => {
+        const value = input.value.trim();
+        if (value) queries[input.dataset.part] = value;
+      });
+      return queries;
+    }
+
+    function renderPartFilters(partFilters) {
+      els.partFilters.innerHTML = "";
+      partFilters.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "part-row";
+        row.innerHTML = [
+          "<span>" + escapeHtml(item.label) + "</span>",
+          "<input data-part='" + escapeHtml(item.value) + "' placeholder='" + T.partPlaceholder + "' />",
+        ].join("");
+        row.querySelector("input").addEventListener("keydown", (event) => {
+          if (event.key === "Enter") search();
+        });
+        els.partFilters.appendChild(row);
+      });
+    }
+
     async function loadMeta() {
       const res = await fetch("/api/meta");
       const data = await res.json();
       els.updated.textContent = "\\ud488\\ubaa9 " + money.format(data.itemCount) + "\\uac74 · \\ud30c\\uc77c " + money.format(data.fileCount) + "\\uac1c";
       els.customer.innerHTML = "<option value=''>" + T.all + "</option>";
-      els.partFilter.innerHTML = "<option value=''>" + T.all + "</option>";
       els.category.innerHTML = "<option value=''>" + T.all + "</option>";
       data.customers.forEach((value) => option(els.customer, value));
-      data.partFilters.forEach((item) => {
-        const node = document.createElement("option");
-        node.value = item.value;
-        node.textContent = item.label;
-        els.partFilter.appendChild(node);
-      });
+      renderPartFilters(data.partFilters);
       data.categories.forEach((value) => option(els.category, value));
     }
 
@@ -677,7 +751,7 @@ function page(res) {
       const params = new URLSearchParams({
         q: els.q.value,
         customer: els.customer.value,
-        part: els.partFilter.value,
+        parts: JSON.stringify(partQueries()),
         category: els.category.value,
         limit: els.limit.value,
       });
@@ -692,7 +766,10 @@ function page(res) {
       els.avgPrice.textContent = data.summary.avgPrice ? price(data.summary.avgPrice) : "-";
       const labelParts = [];
       if (data.query) labelParts.push(T.query + ": " + data.query);
-      if (els.partFilter.value) labelParts.push(T.partLabel + ": " + els.partFilter.options[els.partFilter.selectedIndex].textContent);
+      Object.entries(partQueries()).forEach(([part, query]) => {
+        const label = data.partFilters?.find((item) => item.value === part)?.label || part;
+        labelParts.push(label + ": " + query);
+      });
       els.queryLabel.textContent = labelParts.length ? labelParts.join(" · ") : T.allData;
       els.rows.innerHTML = "";
 
@@ -849,7 +926,9 @@ function page(res) {
     document.querySelector("#reset").addEventListener("click", () => {
       els.q.value = "";
       els.customer.value = "";
-      els.partFilter.value = "";
+      els.partFilters.querySelectorAll("input[data-part]").forEach((input) => {
+        input.value = "";
+      });
       els.category.value = "";
       search();
     });
@@ -862,7 +941,6 @@ function page(res) {
       renderDraft();
     });
     els.customer.addEventListener("change", search);
-    els.partFilter.addEventListener("change", search);
     els.category.addEventListener("change", search);
     els.limit.addEventListener("change", search);
     els.q.addEventListener("keydown", (event) => {
@@ -887,16 +965,23 @@ function handleSearch(reqUrl, res) {
   const items = readCsv(ITEMS_CSV);
   const query = reqUrl.searchParams.get("q") || "";
   const customer = reqUrl.searchParams.get("customer") || "";
-  const part = reqUrl.searchParams.get("part") || "";
+  const partQueries = parsePartQueries(reqUrl.searchParams.get("parts"));
   const category = reqUrl.searchParams.get("category") || "";
   const limit = Math.min(Number(reqUrl.searchParams.get("limit") || 30), 500);
   const groups = queryGroups(query);
+  const hasPartQueries = Object.keys(partQueries).length > 0;
+  const partFilters = PART_FILTERS.map(({ value, label }) => ({ value, label }));
 
   let rows = items
-    .map((row) => ({ ...row, _score: scoreQuery(row, groups) }))
+    .map((row) => {
+      const queryScore = scoreQuery(row, groups);
+      const partScore = scorePartQueries(row, partQueries);
+      return { ...row, _score: queryScore + partScore, _queryScore: queryScore, _partScore: partScore };
+    })
     .filter((row) => row._score > 0)
+    .filter((row) => !groups.length || row._queryScore > 0)
     .filter((row) => !customer || row.customer_hint === customer)
-    .filter((row) => partFilterMatches(row, part))
+    .filter((row) => !hasPartQueries || row._partScore > 0)
     .filter((row) => !category || row.item_category === category);
 
   rows.sort((a, b) => {
@@ -909,6 +994,7 @@ function handleSearch(reqUrl, res) {
   const sum = prices.reduce((total, value) => total + value, 0);
   json(res, 200, {
     query,
+    partFilters,
     rows,
     summary: {
       minPrice: prices.length ? Math.min(...prices) : 0,
