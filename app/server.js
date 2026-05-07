@@ -143,6 +143,27 @@ function runPython(script, args) {
   });
 }
 
+function openLocalFile(filePath) {
+  return new Promise((resolve, reject) => {
+    execFile("explorer.exe", [filePath], { windowsHide: true }, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function exportPathFromRequest(value) {
+  const requested = path.resolve(String(value || ""));
+  const exportRoot = path.resolve(EXPORT_ROOT);
+  const relative = path.relative(exportRoot, requested);
+  if (!requested.toLowerCase().endsWith(".xlsx")) return "";
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return "";
+  return requested;
+}
+
 function page(res) {
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
   res.end(`<!doctype html>
@@ -191,6 +212,13 @@ function page(res) {
     }
     aside { border-right: 1px solid var(--line); }
     .draft { border-left: 1px solid var(--line); }
+    .draft h2 { margin: 0 0 6px; }
+    .draft p.hint { margin: 0 0 8px; }
+    .draft > label { margin: 8px 0 4px; }
+    .draft > input {
+      height: 32px;
+      padding: 6px 9px;
+    }
     section { padding: 16px; overflow: auto; }
     label {
       display: block;
@@ -283,43 +311,56 @@ function page(res) {
     .spec { min-width: 320px; max-width: 560px; line-height: 1.35; }
     .draft-list {
       display: grid;
-      gap: 5px;
-      max-height: 470px;
+      gap: 4px;
+      max-height: 540px;
       overflow: auto;
       margin-top: 10px;
     }
     .draft-item {
       display: grid;
-      grid-template-columns: minmax(150px, 1fr) 54px 86px 86px 42px;
-      gap: 6px;
-      align-items: start;
+      grid-template-columns: minmax(170px, 1fr) 54px 86px 86px 42px;
+      gap: 5px;
+      align-items: center;
       border: 1px solid var(--line);
       border-radius: 6px;
       background: white;
-      padding: 6px;
+      padding: 5px;
+    }
+    .draft-item > div:first-child {
+      min-width: 0;
+      overflow: hidden;
     }
     .draft-item strong {
       display: block;
       margin-bottom: 2px;
       line-height: 1.35;
       font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .draft-item .hint {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .draft-head {
       display: grid;
-      grid-template-columns: minmax(150px, 1fr) 54px 86px 86px 42px;
-      gap: 6px;
-      margin-top: 10px;
+      grid-template-columns: minmax(170px, 1fr) 54px 86px 86px 42px;
+      gap: 5px;
+      margin-top: 7px;
       color: var(--muted);
       font-size: 11px;
       font-weight: 700;
     }
     .draft-cell input {
-      height: 30px;
+      height: 28px;
       padding: 5px 6px;
       font-size: 12px;
     }
     .draft-item button {
-      min-height: 30px;
+      min-height: 28px;
       padding: 0 7px;
       font-size: 12px;
     }
@@ -327,7 +368,7 @@ function page(res) {
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 8px;
-      margin-top: 10px;
+      margin-top: 6px;
     }
     .draft-total {
       margin-top: 14px;
@@ -462,6 +503,7 @@ function page(res) {
       createQuote: "\\uacac\\uc801\\uc11c \\ud30c\\uc77c \\ub9cc\\ub4e4\\uae30",
       quoteCreated: "\\uacac\\uc801\\uc11c\\uac00 \\uc0dd\\uc131\\ub418\\uace0 \\uac80\\uc0c9 \\ub370\\uc774\\ud130\\uc5d0 \\ubc18\\uc601\\ub410\\uc2b5\\ub2c8\\ub2e4.",
       quoteCreateFailed: "\\uacac\\uc801\\uc11c \\uc0dd\\uc131\\uc5d0 \\uc2e4\\ud328\\ud588\\uc2b5\\ub2c8\\ub2e4.",
+      quoteOpenFailed: "\\ud30c\\uc77c\\uc740 \\uc0dd\\uc131\\ub410\\uc9c0\\ub9cc \\uc790\\ub3d9 \\uc5f4\\uae30\\ub294 \\uc2e4\\ud328\\ud588\\uc2b5\\ub2c8\\ub2e4.",
       draftHeaders: ["\\ubd80\\ud488", "\\uc218\\ub7c9", "VAT incl", "VAT excl", ""],
       headers: ["\\uc120\\ud0dd", "\\uacac\\uc801\\uc77c", "\\uc5c5\\uccb4", "\\uc218\\uc2e0/\\ucc38\\uc870", "\\ud488\\ubaa9", "\\ubd80\\ud488\\uba85/\\uaddc\\uaca9", "\\uc218\\ub7c9", "\\ub2e8\\uac00", "\\uc6d0\\ubcf8"],
     };
@@ -697,6 +739,14 @@ function page(res) {
         return;
       }
       els.exportStatus.textContent = T.quoteCreated + " " + data.output;
+      const openRes = await fetch("/api/open-export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ output: data.output }),
+      });
+      if (!openRes.ok) {
+        els.exportStatus.textContent = T.quoteOpenFailed + " " + data.output;
+      }
       await loadMeta();
     }
 
@@ -840,12 +890,30 @@ async function handleUpdateData(res) {
   }
 }
 
+async function handleOpenExport(req, res) {
+  try {
+    const rawBody = await readBody(req);
+    const payload = JSON.parse(rawBody || "{}");
+    const outputPath = exportPathFromRequest(payload.output);
+    if (!outputPath || !fs.existsSync(outputPath)) {
+      json(res, 400, { error: "Export file was not found." });
+      return;
+    }
+
+    await openLocalFile(outputPath);
+    json(res, 200, { ok: true, output: outputPath });
+  } catch (error) {
+    json(res, 500, { error: error.message || String(error) });
+  }
+}
+
 const server = http.createServer((req, res) => {
   const reqUrl = new URL(req.url, `http://localhost:${PORT}`);
   if (reqUrl.pathname === "/") return page(res);
   if (reqUrl.pathname === "/api/meta") return handleMeta(res);
   if (reqUrl.pathname === "/api/search") return handleSearch(reqUrl, res);
   if (reqUrl.pathname === "/api/export-draft" && req.method === "POST") return handleExportDraft(req, res);
+  if (reqUrl.pathname === "/api/open-export" && req.method === "POST") return handleOpenExport(req, res);
   if (reqUrl.pathname === "/api/update-data" && req.method === "POST") return handleUpdateData(res);
   res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("Not found");
