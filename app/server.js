@@ -335,7 +335,11 @@ function page(res) {
         <button id="search"></button>
         <button class="secondary" id="reset"></button>
       </div>
+      <div class="actions">
+        <button class="secondary" id="refreshData"></button>
+      </div>
       <p class="hint" id="usage"></p>
+      <p class="hint" id="refreshStatus"></p>
     </aside>
     <section>
       <div class="stats">
@@ -387,7 +391,11 @@ function page(res) {
       limitLabel: "\\ud45c\\uc2dc \\uac1c\\uc218",
       search: "\\uac80\\uc0c9",
       reset: "\\ucd08\\uae30\\ud654",
-      usage: "\\uc0c8 \\uacac\\uc801\\uc11c\\ub97c \\ucd94\\uac00\\ud55c \\ub4a4 python scripts\\\\update_estimate_database.py \\ub97c \\uc2e4\\ud589\\ud558\\uba74 \\ub370\\uc774\\ud130\\uac00 \\uac31\\uc2e0\\ub429\\ub2c8\\ub2e4.",
+      usage: "\\uc9c1\\uc811 \\ub9cc\\ub4e0 \\uacac\\uc801\\uc11c\\ub294 data/raw_estimates/\\uacac\\uc801\\uc11c/\\uc5c5\\uccb4\\uba85 \\ud3f4\\ub354\\uc5d0 \\ub123\\uace0 \\ub370\\uc774\\ud130 \\uac31\\uc2e0\\uc744 \\ub204\\ub974\\uba74 \\uac80\\uc0c9\\uc5d0 \\ubc18\\uc601\\ub429\\ub2c8\\ub2e4.",
+      refreshData: "\\ub370\\uc774\\ud130 \\uac31\\uc2e0",
+      refreshing: "\\ub370\\uc774\\ud130\\ub97c \\uac31\\uc2e0\\ud558\\ub294 \\uc911\\uc785\\ub2c8\\ub2e4...",
+      refreshed: "\\ub370\\uc774\\ud130 \\uac31\\uc2e0 \\uc644\\ub8cc",
+      refreshFailed: "\\ub370\\uc774\\ud130 \\uac31\\uc2e0 \\uc2e4\\ud328",
       countLabel: "\\uac80\\uc0c9 \\uacb0\\uacfc",
       minLabel: "\\ucd5c\\uc800 \\ub2e8\\uac00",
       maxLabel: "\\ucd5c\\uace0 \\ub2e8\\uac00",
@@ -427,6 +435,7 @@ function page(res) {
       draftTotal: document.querySelector("#draftTotal"),
       queryLabel: document.querySelector("#queryLabel"),
       updated: document.querySelector("#updated"),
+      refreshStatus: document.querySelector("#refreshStatus"),
       draftCustomer: document.querySelector("#draftCustomer"),
       draftAttention: document.querySelector("#draftAttention"),
       draftTitleInput: document.querySelector("#draftTitleInput"),
@@ -453,6 +462,7 @@ function page(res) {
       setText("limitLabel", T.limitLabel);
       setText("search", T.search);
       setText("reset", T.reset);
+      setText("refreshData", T.refreshData);
       setText("usage", T.usage);
       setText("countLabel", T.countLabel);
       setText("minLabel", T.minLabel);
@@ -644,6 +654,25 @@ function page(res) {
       await loadMeta();
     }
 
+    async function refreshData() {
+      els.refreshStatus.textContent = T.refreshing;
+      const button = document.querySelector("#refreshData");
+      button.disabled = true;
+      try {
+        const res = await fetch("/api/update-data", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) {
+          els.refreshStatus.textContent = T.refreshFailed + " " + (data.error || "");
+          return;
+        }
+        els.refreshStatus.textContent = T.refreshed + " · " + (data.message || "");
+        await loadMeta();
+        await search();
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     setupText();
     document.querySelector("#search").addEventListener("click", search);
     document.querySelector("#reset").addEventListener("click", () => {
@@ -654,6 +683,7 @@ function page(res) {
     });
     document.querySelector("#copyDraft").addEventListener("click", copyDraft);
     document.querySelector("#createQuote").addEventListener("click", createQuoteFile);
+    document.querySelector("#refreshData").addEventListener("click", refreshData);
     document.querySelector("#clearDraft").addEventListener("click", () => {
       draft.splice(0, draft.length);
       renderDraft();
@@ -739,12 +769,28 @@ async function handleExportDraft(req, res) {
   }
 }
 
+async function handleUpdateData(res) {
+  try {
+    const updateScript = path.join(ROOT, "scripts", "update_estimate_database.py");
+    const stdout = await runPython(updateScript, []);
+    const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+    json(res, 200, {
+      ok: true,
+      message: lines.slice(-4).join(" · "),
+      output: stdout,
+    });
+  } catch (error) {
+    json(res, 500, { error: error.stderr || error.message || String(error) });
+  }
+}
+
 const server = http.createServer((req, res) => {
   const reqUrl = new URL(req.url, `http://localhost:${PORT}`);
   if (reqUrl.pathname === "/") return page(res);
   if (reqUrl.pathname === "/api/meta") return handleMeta(res);
   if (reqUrl.pathname === "/api/search") return handleSearch(reqUrl, res);
   if (reqUrl.pathname === "/api/export-draft" && req.method === "POST") return handleExportDraft(req, res);
+  if (reqUrl.pathname === "/api/update-data" && req.method === "POST") return handleUpdateData(res);
   res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("Not found");
 });
