@@ -15,6 +15,7 @@ from openpyxl import load_workbook
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_ROOT = PROJECT_ROOT / "data" / "raw_estimates"
 EXPORT_ROOT = PROJECT_ROOT / "data" / "exports"
+RAW_QUOTE_ROOT = RAW_ROOT / "\uacac\uc801\uc11c"
 
 LABEL_RECIPIENT = "\uc218\uc2e0"
 LABEL_ATTENTION = "\ucc38\uc870"
@@ -159,6 +160,15 @@ def create_quote(payload: dict[str, Any]) -> Path:
     return output
 
 
+def archive_quote(output: Path, payload: dict[str, Any]) -> Path:
+    customer = safe_filename(str(payload.get("customer") or "customer"))
+    archive_dir = RAW_QUOTE_ROOT / customer
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = archive_dir / output.name
+    shutil.copy2(output, archive_path)
+    return archive_path
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         raise SystemExit("Usage: create_quote_from_draft.py draft.json")
@@ -168,7 +178,8 @@ def main() -> None:
         payload = json.load(file)
 
     output = create_quote(payload)
-    print(json.dumps({"output": str(output)}, ensure_ascii=False))
+    archived = archive_quote(output, payload)
+    print(json.dumps({"output": str(output), "archived": str(archived)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

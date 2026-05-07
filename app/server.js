@@ -408,7 +408,7 @@ function page(res) {
       attentionName: "\\ucc38\\uc870",
       quoteTitle: "\\uacac\\uc801\\uba85",
       createQuote: "\\uacac\\uc801\\uc11c \\ud30c\\uc77c \\ub9cc\\ub4e4\\uae30",
-      quoteCreated: "\\uacac\\uc801\\uc11c\\uac00 \\uc0dd\\uc131\\ub410\\uc2b5\\ub2c8\\ub2e4.",
+      quoteCreated: "\\uacac\\uc801\\uc11c\\uac00 \\uc0dd\\uc131\\ub418\\uace0 \\uac80\\uc0c9 \\ub370\\uc774\\ud130\\uc5d0 \\ubc18\\uc601\\ub410\\uc2b5\\ub2c8\\ub2e4.",
       quoteCreateFailed: "\\uacac\\uc801\\uc11c \\uc0dd\\uc131\\uc5d0 \\uc2e4\\ud328\\ud588\\uc2b5\\ub2c8\\ub2e4.",
       headers: ["\\uc120\\ud0dd", "\\uacac\\uc801\\uc77c", "\\uc5c5\\uccb4", "\\uc218\\uc2e0/\\ucc38\\uc870", "\\ud488\\ubaa9", "\\ubd80\\ud488\\uba85/\\uaddc\\uaca9", "\\uc218\\ub7c9", "\\ub2e8\\uac00", "\\uc6d0\\ubcf8"],
     };
@@ -621,6 +621,7 @@ function page(res) {
         return;
       }
       els.exportStatus.textContent = T.quoteCreated + " " + data.output;
+      await loadMeta();
     }
 
     setupText();
@@ -705,6 +706,9 @@ async function handleExportDraft(req, res) {
     const stdout = await runPython(script, [draftPath]);
 
     const result = JSON.parse(stdout.trim().split(/\r?\n/).pop() || "{}");
+    const updateScript = path.join(ROOT, "scripts", "update_estimate_database.py");
+    await runPython(updateScript, []);
+    result.updated = true;
     json(res, 200, result);
   } catch (error) {
     json(res, 500, { error: error.stderr || error.message || String(error) });
