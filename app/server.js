@@ -10,6 +10,22 @@ const FILES_CSV = path.join(ROOT, "data", "processed", "estimate_files.csv");
 const EXPORT_ROOT = path.join(ROOT, "data", "exports");
 const PORT = Number(process.env.PORT || 8787);
 const PYTHON_EXE = process.env.PYTHON_EXE || "C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python314\\python.exe";
+const PART_FILTERS = [
+  { value: "cpu", label: "CPU", aliases: ["cpu", "processor", "프로세서", "제온"] },
+  { value: "ram", label: "RAM", aliases: ["ram", "memory", "메모리", "ddr"] },
+  { value: "board", label: "BOARD", aliases: ["board", "mainboard", "motherboard", "mbd", "m/b", "메인보드"] },
+  { value: "vga", label: "VGA", aliases: ["vga", "gpu", "그래픽", "그래픽카드", "rtx", "gtx", "radeon", "지포스"] },
+  { value: "ssd", label: "SSD", aliases: ["ssd", "sdd", "nvme", "m.2", "고속저장"] },
+  { value: "hdd", label: "HDD", aliases: ["hdd", "hard", "하드", "외장하드"] },
+  { value: "case", label: "CASE", aliases: ["case", "케이스", "샤시"] },
+  { value: "power", label: "POWER", aliases: ["power", "powor", "psu", "파워"] },
+  { value: "lancard", label: "LANCARD", aliases: ["lan", "lancard", "lan card", "랜카드", "랜 카드"] },
+  { value: "serial", label: "SERIAL", aliases: ["serial", "시리얼", "com port", "rs232"] },
+  { value: "keyboard", label: "KEYBOARD", aliases: ["keyboard", "키보드"] },
+  { value: "mouse", label: "MOUSE", aliases: ["mouse", "마우스"] },
+  { value: "monitor", label: "모니터", aliases: ["monitor", "모니터"] },
+  { value: "speaker", label: "스피커", aliases: ["speaker", "스피커", "sound bar", "사운드바"] },
+];
 
 function normalize(text) {
   return String(text || "")
@@ -105,6 +121,19 @@ function queryGroups(query) {
 function scoreQuery(row, groups) {
   if (!groups.length) return 1;
   return Math.max(...groups.map((tokens) => score(row, tokens)));
+}
+
+function partFilterMatches(row, partValue) {
+  if (!partValue) return true;
+  const filter = PART_FILTERS.find((item) => item.value === partValue);
+  if (!filter) return true;
+  const haystack = normalize([
+    row.item_category,
+    row.part_name,
+    row.spec,
+    row.normalized_part_key,
+  ].join(" "));
+  return filter.aliases.some((alias) => haystack.includes(normalize(alias)));
 }
 
 function json(res, status, body) {
@@ -422,6 +451,8 @@ function page(res) {
       <input id="q" autofocus />
       <label id="customerLabel" for="customer"></label>
       <select id="customer"><option value="" id="allCustomer"></option></select>
+      <label id="partLabel" for="partFilter"></label>
+      <select id="partFilter"><option value="" id="allPart"></option></select>
       <label id="categoryLabel" for="category"></label>
       <select id="category"><option value="" id="allCategory"></option></select>
       <label id="limitLabel" for="limit"></label>
@@ -487,6 +518,7 @@ function page(res) {
       qLabel: "\\uac80\\uc0c9\\uc5b4",
       qPlaceholder: "\\uc608: 5060, 12400F \\ucf00\\uc774\\uc81c\\uc774\\uc528, \\ub9c8\\uc774\\ud06c\\ub860 1TB, 12700 z790",
       customerLabel: "\\uc5c5\\uccb4/\\ud3f4\\ub354",
+      partLabel: "\\ubd80\\ud488\\ubcc4 \\ud544\\ud130",
       categoryLabel: "\\ud488\\ubaa9",
       all: "\\uc804\\uccb4",
       limitLabel: "\\ud45c\\uc2dc \\uac1c\\uc218",
@@ -529,6 +561,7 @@ function page(res) {
     const els = {
       q: document.querySelector("#q"),
       customer: document.querySelector("#customer"),
+      partFilter: document.querySelector("#partFilter"),
       category: document.querySelector("#category"),
       limit: document.querySelector("#limit"),
       rows: document.querySelector("#rows"),
@@ -562,8 +595,10 @@ function page(res) {
       setText("qLabel", T.qLabel);
       els.q.placeholder = T.qPlaceholder;
       setText("customerLabel", T.customerLabel);
+      setText("partLabel", T.partLabel);
       setText("categoryLabel", T.categoryLabel);
       setText("allCustomer", T.all);
+      setText("allPart", T.all);
       setText("allCategory", T.all);
       setText("limitLabel", T.limitLabel);
       setText("search", T.search);
@@ -625,7 +660,16 @@ function page(res) {
       const res = await fetch("/api/meta");
       const data = await res.json();
       els.updated.textContent = "\\ud488\\ubaa9 " + money.format(data.itemCount) + "\\uac74 · \\ud30c\\uc77c " + money.format(data.fileCount) + "\\uac1c";
+      els.customer.innerHTML = "<option value=''>" + T.all + "</option>";
+      els.partFilter.innerHTML = "<option value=''>" + T.all + "</option>";
+      els.category.innerHTML = "<option value=''>" + T.all + "</option>";
       data.customers.forEach((value) => option(els.customer, value));
+      data.partFilters.forEach((item) => {
+        const node = document.createElement("option");
+        node.value = item.value;
+        node.textContent = item.label;
+        els.partFilter.appendChild(node);
+      });
       data.categories.forEach((value) => option(els.category, value));
     }
 
@@ -633,6 +677,7 @@ function page(res) {
       const params = new URLSearchParams({
         q: els.q.value,
         customer: els.customer.value,
+        part: els.partFilter.value,
         category: els.category.value,
         limit: els.limit.value,
       });
@@ -645,7 +690,10 @@ function page(res) {
       els.minPrice.textContent = data.summary.minPrice ? price(data.summary.minPrice) : "-";
       els.maxPrice.textContent = data.summary.maxPrice ? price(data.summary.maxPrice) : "-";
       els.avgPrice.textContent = data.summary.avgPrice ? price(data.summary.avgPrice) : "-";
-      els.queryLabel.textContent = data.query ? T.query + ": " + data.query : T.allData;
+      const labelParts = [];
+      if (data.query) labelParts.push(T.query + ": " + data.query);
+      if (els.partFilter.value) labelParts.push(T.partLabel + ": " + els.partFilter.options[els.partFilter.selectedIndex].textContent);
+      els.queryLabel.textContent = labelParts.length ? labelParts.join(" · ") : T.allData;
       els.rows.innerHTML = "";
 
       data.rows.forEach((row, index) => {
@@ -801,6 +849,7 @@ function page(res) {
     document.querySelector("#reset").addEventListener("click", () => {
       els.q.value = "";
       els.customer.value = "";
+      els.partFilter.value = "";
       els.category.value = "";
       search();
     });
@@ -812,6 +861,10 @@ function page(res) {
       draft.splice(0, draft.length);
       renderDraft();
     });
+    els.customer.addEventListener("change", search);
+    els.partFilter.addEventListener("change", search);
+    els.category.addEventListener("change", search);
+    els.limit.addEventListener("change", search);
     els.q.addEventListener("keydown", (event) => {
       if (event.key === "Enter") search();
     });
@@ -826,13 +879,15 @@ function handleMeta(res) {
   const files = readCsv(FILES_CSV);
   const customers = [...new Set(items.map((row) => row.customer_hint).filter(Boolean))].sort();
   const categories = [...new Set(items.map((row) => row.item_category).filter(Boolean))].sort();
-  json(res, 200, { itemCount: items.length, fileCount: files.length, customers, categories });
+  const partFilters = PART_FILTERS.map(({ value, label }) => ({ value, label }));
+  json(res, 200, { itemCount: items.length, fileCount: files.length, customers, partFilters, categories });
 }
 
 function handleSearch(reqUrl, res) {
   const items = readCsv(ITEMS_CSV);
   const query = reqUrl.searchParams.get("q") || "";
   const customer = reqUrl.searchParams.get("customer") || "";
+  const part = reqUrl.searchParams.get("part") || "";
   const category = reqUrl.searchParams.get("category") || "";
   const limit = Math.min(Number(reqUrl.searchParams.get("limit") || 30), 500);
   const groups = queryGroups(query);
@@ -841,6 +896,7 @@ function handleSearch(reqUrl, res) {
     .map((row) => ({ ...row, _score: scoreQuery(row, groups) }))
     .filter((row) => row._score > 0)
     .filter((row) => !customer || row.customer_hint === customer)
+    .filter((row) => partFilterMatches(row, part))
     .filter((row) => !category || row.item_category === category);
 
   rows.sort((a, b) => {
