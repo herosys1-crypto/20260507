@@ -1,12 +1,15 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { execFile } = require("child_process");
 const { URL } = require("url");
 
 const ROOT = path.resolve(__dirname, "..");
 const ITEMS_CSV = path.join(ROOT, "data", "processed", "estimate_items.csv");
 const FILES_CSV = path.join(ROOT, "data", "processed", "estimate_files.csv");
+const EXPORT_ROOT = path.join(ROOT, "data", "exports");
 const PORT = Number(process.env.PORT || 8787);
+const PYTHON_EXE = process.env.PYTHON_EXE || "C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python314\\python.exe";
 
 function normalize(text) {
   return String(text || "")
@@ -98,6 +101,34 @@ function json(res, status, body) {
     "Cache-Control": "no-store",
   });
   res.end(JSON.stringify(body));
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 2_000_000) {
+        req.destroy();
+        reject(new Error("Request body is too large."));
+      }
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}
+
+function runPython(script, args) {
+  return new Promise((resolve, reject) => {
+    execFile(PYTHON_EXE, [script, ...args], { cwd: ROOT, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
 }
 
 function page(res) {
@@ -325,6 +356,12 @@ function page(res) {
     <aside class="draft">
       <h2 id="draftTitle"></h2>
       <div class="hint" id="draftHint"></div>
+      <label id="draftCustomerLabel" for="draftCustomer"></label>
+      <input id="draftCustomer" />
+      <label id="draftAttentionLabel" for="draftAttention"></label>
+      <input id="draftAttention" />
+      <label id="draftTitleLabel" for="draftTitleInput"></label>
+      <input id="draftTitleInput" />
       <div class="draft-list" id="draftRows"></div>
       <div class="draft-total">
         <span class="hint" id="draftTotalLabel"></span>
@@ -332,8 +369,10 @@ function page(res) {
       </div>
       <div class="actions">
         <button id="copyDraft"></button>
+        <button id="createQuote"></button>
         <button class="secondary" id="clearDraft"></button>
       </div>
+      <p class="hint" id="exportStatus"></p>
     </aside>
   </main>
   <script>
@@ -365,6 +404,12 @@ function page(res) {
       remove: "\\uc0ad\\uc81c",
       copied: "\\ud074\\ub9bd\\ubcf4\\ub4dc\\uc5d0 \\ubcf5\\uc0ac\\ub410\\uc2b5\\ub2c8\\ub2e4.",
       emptyDraft: "\\ucd08\\uc548\\uc5d0 \\ub2f4\\uae34 \\ud488\\ubaa9\\uc774 \\uc5c6\\uc2b5\\ub2c8\\ub2e4.",
+      customerName: "\\uc218\\uc2e0/\\uac70\\ub798\\ucc98",
+      attentionName: "\\ucc38\\uc870",
+      quoteTitle: "\\uacac\\uc801\\uba85",
+      createQuote: "\\uacac\\uc801\\uc11c \\ud30c\\uc77c \\ub9cc\\ub4e4\\uae30",
+      quoteCreated: "\\uacac\\uc801\\uc11c\\uac00 \\uc0dd\\uc131\\ub410\\uc2b5\\ub2c8\\ub2e4.",
+      quoteCreateFailed: "\\uacac\\uc801\\uc11c \\uc0dd\\uc131\\uc5d0 \\uc2e4\\ud328\\ud588\\uc2b5\\ub2c8\\ub2e4.",
       headers: ["\\uc120\\ud0dd", "\\uacac\\uc801\\uc77c", "\\uc5c5\\uccb4", "\\uc218\\uc2e0/\\ucc38\\uc870", "\\ud488\\ubaa9", "\\ubd80\\ud488\\uba85/\\uaddc\\uaca9", "\\uc218\\ub7c9", "\\ub2e8\\uac00", "\\uc6d0\\ubcf8"],
     };
 
@@ -382,6 +427,10 @@ function page(res) {
       draftTotal: document.querySelector("#draftTotal"),
       queryLabel: document.querySelector("#queryLabel"),
       updated: document.querySelector("#updated"),
+      draftCustomer: document.querySelector("#draftCustomer"),
+      draftAttention: document.querySelector("#draftAttention"),
+      draftTitleInput: document.querySelector("#draftTitleInput"),
+      exportStatus: document.querySelector("#exportStatus"),
     };
     const money = new Intl.NumberFormat("ko-KR");
     const draft = [];
@@ -413,8 +462,12 @@ function page(res) {
       setText("priceHint", T.priceHint);
       setText("draftTitle", T.draftTitle);
       setText("draftHint", T.draftHint);
+      setText("draftCustomerLabel", T.customerName);
+      setText("draftAttentionLabel", T.attentionName);
+      setText("draftTitleLabel", T.quoteTitle);
       setText("draftTotalLabel", T.draftTotalLabel);
       setText("copyDraft", T.copyDraft);
+      setText("createQuote", T.createQuote);
       setText("clearDraft", T.clearDraft);
       document.querySelector("#headRow").innerHTML = T.headers.map((text) => "<th>" + text + "</th>").join("");
     }
@@ -545,6 +598,31 @@ function page(res) {
       alert(T.copied);
     }
 
+    async function createQuoteFile() {
+      if (!draft.length) {
+        alert(T.emptyDraft);
+        return;
+      }
+      els.exportStatus.textContent = "";
+      const payload = {
+        customer: els.draftCustomer.value,
+        attention: els.draftAttention.value,
+        title: els.draftTitleInput.value || T.draftTitle,
+        items: draft,
+      };
+      const res = await fetch("/api/export-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        els.exportStatus.textContent = T.quoteCreateFailed + " " + (data.error || "");
+        return;
+      }
+      els.exportStatus.textContent = T.quoteCreated + " " + data.output;
+    }
+
     setupText();
     document.querySelector("#search").addEventListener("click", search);
     document.querySelector("#reset").addEventListener("click", () => {
@@ -554,6 +632,7 @@ function page(res) {
       search();
     });
     document.querySelector("#copyDraft").addEventListener("click", copyDraft);
+    document.querySelector("#createQuote").addEventListener("click", createQuoteFile);
     document.querySelector("#clearDraft").addEventListener("click", () => {
       draft.splice(0, draft.length);
       renderDraft();
@@ -608,11 +687,40 @@ function handleSearch(reqUrl, res) {
   });
 }
 
+async function handleExportDraft(req, res) {
+  let draftPath = "";
+  try {
+    const rawBody = await readBody(req);
+    const payload = JSON.parse(rawBody || "{}");
+    if (!Array.isArray(payload.items) || payload.items.length === 0) {
+      json(res, 400, { error: "Draft has no items." });
+      return;
+    }
+
+    fs.mkdirSync(EXPORT_ROOT, { recursive: true });
+    draftPath = path.join(EXPORT_ROOT, `draft_${Date.now()}.json`);
+    fs.writeFileSync(draftPath, JSON.stringify(payload), "utf8");
+
+    const script = path.join(ROOT, "scripts", "create_quote_from_draft.py");
+    const stdout = await runPython(script, [draftPath]);
+
+    const result = JSON.parse(stdout.trim().split(/\r?\n/).pop() || "{}");
+    json(res, 200, result);
+  } catch (error) {
+    json(res, 500, { error: error.stderr || error.message || String(error) });
+  } finally {
+    if (draftPath && fs.existsSync(draftPath)) {
+      fs.unlinkSync(draftPath);
+    }
+  }
+}
+
 const server = http.createServer((req, res) => {
   const reqUrl = new URL(req.url, `http://localhost:${PORT}`);
   if (reqUrl.pathname === "/") return page(res);
   if (reqUrl.pathname === "/api/meta") return handleMeta(res);
   if (reqUrl.pathname === "/api/search") return handleSearch(reqUrl, res);
+  if (reqUrl.pathname === "/api/export-draft" && req.method === "POST") return handleExportDraft(req, res);
   res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("Not found");
 });
