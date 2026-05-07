@@ -477,10 +477,27 @@ function page(res) {
       border-radius: 8px;
       background: #fff;
     }
-    .draft-total b {
-      display: block;
+    .total-lines {
+      display: grid;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .total-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .total-line b {
+      font-size: 17px;
+      font-variant-numeric: tabular-nums;
+    }
+    .total-line.final {
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    .total-line.final b {
       font-size: 22px;
-      margin-top: 4px;
     }
     @media (max-width: 1180px) {
       main { grid-template-columns: 280px minmax(0, 1fr); }
@@ -554,7 +571,11 @@ function page(res) {
       <div class="draft-list" id="draftRows"></div>
       <div class="draft-total">
         <span class="hint" id="draftTotalLabel"></span>
-        <b id="draftTotal">0</b>
+        <div class="total-lines">
+          <div class="total-line"><span id="supplyTotalLabel"></span><b id="supplyTotal">0</b></div>
+          <div class="total-line"><span id="vatTotalLabel"></span><b id="vatTotal">0</b></div>
+          <div class="total-line final"><span id="includedTotalLabel"></span><b id="includedTotal">0</b></div>
+        </div>
       </div>
       <div class="actions">
         <button id="copyDraft"></button>
@@ -589,10 +610,13 @@ function page(res) {
       avgLabel: "\\ud3c9\\uade0 \\ub2e8\\uac00",
       allData: "\\uc804\\uccb4 \\ub370\\uc774\\ud130",
       query: "\\uac80\\uc0c9",
-      priceHint: "\\ub2e8\\uac00\\ub294 \\uae30\\uc874 \\uacac\\uc801 \\uae30\\uc900\\uc785\\ub2c8\\ub2e4.",
+      priceHint: "\\ucd5c\\uadfc \\uacac\\uc801\\uc77c \\uc6b0\\uc120, \\ub2e8\\uac00\\ub294 \\uae30\\uc874 \\uacac\\uc801 \\uae30\\uc900\\uc785\\ub2c8\\ub2e4.",
       draftTitle: "\\uc0c8 \\uacac\\uc801 \\ucd08\\uc548",
       draftHint: "\\uac80\\uc0c9 \\uacb0\\uacfc\\uc5d0\\uc11c \\ucd94\\uac00\\ub97c \\ub204\\ub974\\uba74 \\uc774\\uacf3\\uc5d0 \\ubaa8\\uc785\\ub2c8\\ub2e4.",
       draftTotalLabel: "\\ucd08\\uc548 \\ud569\\uacc4",
+      supplyTotal: "\\uacf5\\uae09\\uac00",
+      vatTotal: "VAT",
+      includedTotal: "VAT \\ud3ec\\ud568 \\ud569\\uacc4",
       copyDraft: "\\ucd08\\uc548 \\ubcf5\\uc0ac",
       clearDraft: "\\ube44\\uc6b0\\uae30",
       add: "\\ucd94\\uac00",
@@ -608,8 +632,8 @@ function page(res) {
       quoteCreated: "\\uacac\\uc801\\uc11c\\uac00 \\uc0dd\\uc131\\ub418\\uace0 \\uac80\\uc0c9 \\ub370\\uc774\\ud130\\uc5d0 \\ubc18\\uc601\\ub410\\uc2b5\\ub2c8\\ub2e4.",
       quoteCreateFailed: "\\uacac\\uc801\\uc11c \\uc0dd\\uc131\\uc5d0 \\uc2e4\\ud328\\ud588\\uc2b5\\ub2c8\\ub2e4.",
       quoteOpenFailed: "\\ud30c\\uc77c\\uc740 \\uc0dd\\uc131\\ub410\\uc9c0\\ub9cc \\uc790\\ub3d9 \\uc5f4\\uae30\\ub294 \\uc2e4\\ud328\\ud588\\uc2b5\\ub2c8\\ub2e4.",
-      draftHeaders: ["\\ubd80\\ud488", "\\uc218\\ub7c9", "VAT incl", "VAT excl", ""],
-      headers: ["\\uc120\\ud0dd", "\\uacac\\uc801\\uc77c", "\\uc5c5\\uccb4", "\\uc218\\uc2e0/\\ucc38\\uc870", "\\ud488\\ubaa9", "\\ubd80\\ud488\\uba85/\\uaddc\\uaca9", "\\uc218\\ub7c9", "\\ub2e8\\uac00", "\\uc6d0\\ubcf8"],
+      draftHeaders: ["\\ubd80\\ud488", "\\uc218\\ub7c9", "VAT excl", "VAT incl", ""],
+      headers: ["\\uc120\\ud0dd", "\\ucd5c\\uadfc\\uacac\\uc801", "\\ud488\\ubaa9", "\\ubd80\\ud488\\uba85/\\uaddc\\uaca9", "VAT excl", "VAT incl", "\\uc218\\ub7c9", "\\uc5c5\\uccb4", "\\uc6d0\\ubcf8"],
     };
 
     const els = {
@@ -624,7 +648,9 @@ function page(res) {
       minPrice: document.querySelector("#minPrice"),
       maxPrice: document.querySelector("#maxPrice"),
       avgPrice: document.querySelector("#avgPrice"),
-      draftTotal: document.querySelector("#draftTotal"),
+      supplyTotal: document.querySelector("#supplyTotal"),
+      vatTotal: document.querySelector("#vatTotal"),
+      includedTotal: document.querySelector("#includedTotal"),
       queryLabel: document.querySelector("#queryLabel"),
       updated: document.querySelector("#updated"),
       refreshStatus: document.querySelector("#refreshStatus"),
@@ -675,6 +701,9 @@ function page(res) {
       setText("copyDraft", T.copyDraft);
       setText("createQuote", T.createQuote);
       setText("clearDraft", T.clearDraft);
+      setText("supplyTotalLabel", T.supplyTotal);
+      setText("vatTotalLabel", T.vatTotal);
+      setText("includedTotalLabel", T.includedTotal);
       document.querySelector("#headRow").innerHTML = T.headers.map((text) => "<th>" + text + "</th>").join("");
       document.querySelector("#draftHead").innerHTML = T.draftHeaders.map((text) => "<div>" + text + "</div>").join("");
     }
@@ -682,6 +711,10 @@ function page(res) {
     function price(value) {
       const number = Number(value || 0);
       return number ? money.format(number) : "";
+    }
+
+    function vatIncluded(value) {
+      return Math.round(Number(value || 0) * 1.1);
     }
 
     function includedToExcluded(included, unit = 1000) {
@@ -776,12 +809,12 @@ function page(res) {
         tr.innerHTML = [
           "<td><button data-add='" + index + "'>" + T.add + "</button></td>",
           "<td>" + escapeHtml(row.quote_date) + "</td>",
-          "<td>" + escapeHtml(row.customer_hint) + "</td>",
-          "<td>" + escapeHtml(row.recipient) + "<br><span class='hint'>" + escapeHtml(row.attention) + "</span></td>",
           "<td>" + escapeHtml(row.item_category) + "</td>",
           "<td class='spec'>" + escapeHtml(row.spec) + "</td>",
-          "<td class='qty'>" + escapeHtml(row.quantity) + "</td>",
           "<td class='price'>" + price(row.quoted_unit_price) + "</td>",
+          "<td class='price'>" + price(vatIncluded(row.quoted_unit_price)) + "</td>",
+          "<td class='qty'>" + escapeHtml(row.quantity) + "</td>",
+          "<td>" + escapeHtml(row.customer_hint) + "<br><span class='hint'>" + escapeHtml(row.recipient || row.attention) + "</span></td>",
           "<td><span class='hint'>" + escapeHtml(row.source_file) + "</span></td>",
         ].join("");
         tr.querySelector("button").addEventListener("click", () => addDraft(row));
@@ -797,7 +830,7 @@ function page(res) {
         qty: Number(row.quantity || 1) || 1,
         unit: row.unit || "EA",
         price: basePrice,
-        tax_included_price: Math.round(basePrice * 1.1),
+        tax_included_price: vatIncluded(basePrice),
         source: row.source_file || "",
         quoteDate: row.quote_date || "",
       });
@@ -806,17 +839,19 @@ function page(res) {
 
     function renderDraft() {
       els.draftRows.innerHTML = "";
-      let total = 0;
+      let supplyTotal = 0;
+      let includedTotal = 0;
       draft.forEach((item, index) => {
-        const amount = item.qty * (item.tax_included_price || Math.round(item.price * 1.1));
-        total += amount;
+        const includedPrice = item.tax_included_price || vatIncluded(item.price);
+        supplyTotal += item.qty * item.price;
+        includedTotal += item.qty * includedPrice;
         const node = document.createElement("div");
         node.className = "draft-item";
         node.innerHTML = [
           "<div><strong>" + escapeHtml(item.category) + " · " + escapeHtml(item.spec) + "</strong><span class='hint'>" + escapeHtml(item.quoteDate) + " · " + escapeHtml(item.source) + "</span></div>",
           "<div class='draft-cell'><input data-field='qty' data-index='" + index + "' value='" + item.qty + "'></div>",
-          "<div class='draft-cell'><input data-field='tax_included_price' data-index='" + index + "' value='" + (item.tax_included_price || Math.round(item.price * 1.1)) + "'></div>",
           "<div class='draft-cell'><input data-field='price' data-index='" + index + "' value='" + item.price + "'></div>",
+          "<div class='draft-cell'><input data-field='tax_included_price' data-index='" + index + "' value='" + includedPrice + "'></div>",
           "<div><button class='ghost' data-remove='" + index + "'>" + T.remove + "</button></div>",
         ].join("");
         node.querySelectorAll("input").forEach((input) => {
@@ -828,7 +863,7 @@ function page(res) {
               draft[itemIndex].price = includedToExcluded(draft[itemIndex].tax_included_price);
             }
             if (field === "price") {
-              draft[itemIndex].tax_included_price = Math.round(draft[itemIndex].price * 1.1);
+              draft[itemIndex].tax_included_price = vatIncluded(draft[itemIndex].price);
             }
             renderDraft();
           });
@@ -839,7 +874,9 @@ function page(res) {
         });
         els.draftRows.appendChild(node);
       });
-      els.draftTotal.textContent = price(total) || "0";
+      els.supplyTotal.textContent = price(supplyTotal) || "0";
+      els.vatTotal.textContent = price(includedTotal - supplyTotal) || "0";
+      els.includedTotal.textContent = price(includedTotal) || "0";
     }
 
     async function copyDraft() {
@@ -983,8 +1020,10 @@ function handleSearch(reqUrl, res) {
     .filter((row) => !category || row.item_category === category);
 
   rows.sort((a, b) => {
+    const dateCompare = String(b.quote_date).localeCompare(String(a.quote_date));
+    if (dateCompare !== 0) return dateCompare;
     if (b._score !== a._score) return b._score - a._score;
-    return String(b.quote_date).localeCompare(String(a.quote_date));
+    return toNumber(a.quoted_unit_price) - toNumber(b.quoted_unit_price);
   });
 
   rows = rows.slice(0, limit);
