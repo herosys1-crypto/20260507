@@ -10,6 +10,12 @@ from typing import Any
 
 from openpyxl.cell.cell import MergedCell
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
+
+try:
+    import win32com.client
+except ImportError:  # pragma: no cover - optional Windows Excel automation.
+    win32com = None
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -187,6 +193,140 @@ def write_items(ws, header_row: int, no_col: int, items: list[dict[str, Any]]) -
     return total
 
 
+def cell_text_com(ws, row: int, col: int) -> str:
+    value = ws.Cells(row, col).Value
+    return clean(value)
+
+
+def find_header_com(ws) -> tuple[int, int] | None:
+    for row in range(1, 81):
+        for col in range(1, 26):
+            if cell_text_com(ws, row, col) == "No.":
+                return row, col
+    return None
+
+
+def has_vat_split_columns_com(ws, header_row: int, no_col: int) -> bool:
+    header_text = " ".join(cell_text_com(ws, header_row, col) for col in range(no_col, no_col + 10))
+    return VAT_SPLIT_LABEL in header_text
+
+
+def set_value_com(ws, row: int, col: int, value: Any) -> None:
+    try:
+        ws.Cells(row, col).Value = value
+    except Exception:
+        pass
+
+
+def set_formula_com(ws, row: int, col: int, formula: str) -> None:
+    try:
+        ws.Cells(row, col).Formula = formula
+    except Exception:
+        pass
+
+
+def clear_old_items_com(ws, header_row: int, no_col: int) -> None:
+    for row in range(header_row + 1, header_row + 81):
+        for col in range(no_col, no_col + 10):
+            try:
+                ws.Cells(row, col).ClearContents()
+            except Exception:
+                pass
+
+
+def find_label_cell_com(ws, label: str) -> tuple[int, int] | None:
+    normalized = label.replace(" ", "")
+    for row in range(1, 21):
+        for col in range(1, 13):
+            if cell_text_com(ws, row, col).replace(" ", "") == normalized:
+                return row, col
+    return None
+
+
+def set_near_label_com(ws, label: str, value: Any, offset: int = 1) -> None:
+    cell = find_label_cell_com(ws, label)
+    if cell:
+        row, col = cell
+        set_value_com(ws, row, col + offset, value)
+
+
+def write_items_com(ws, header_row: int, no_col: int, items: list[dict[str, Any]]) -> int:
+    total = 0
+    vat_split = has_vat_split_columns_com(ws, header_row, no_col)
+    for index, item in enumerate(items, start=1):
+        row = header_row + 1 + index
+        qty = to_number(item.get("qty") or item.get("quantity") or 1)
+        price = unit_price_from_item(item)
+        vat = int(round(price * 0.1))
+        amount = qty * (price + vat) if vat_split else qty * price
+        total += amount
+
+        set_value_com(ws, row, no_col, index)
+        set_value_com(ws, row, no_col + 1, item.get("category") or item.get("item_category") or "")
+        set_value_com(ws, row, no_col + 2, item.get("spec") or "")
+        set_value_com(ws, row, no_col + 3, qty)
+        set_value_com(ws, row, no_col + 4, item.get("unit") or "EA")
+        set_value_com(ws, row, no_col + 5, price)
+        if vat_split:
+            unit_addr = f"{get_column_letter(no_col + 5)}{row}"
+            vat_addr = f"{get_column_letter(no_col + 6)}{row}"
+            qty_addr = f"{get_column_letter(no_col + 3)}{row}"
+            set_formula_com(ws, row, no_col + 6, f"={unit_addr}*0.1")
+            set_formula_com(
+                ws,
+                row,
+                no_col + 7,
+                f"=({unit_addr}+{vat_addr})*{qty_addr}",
+            )
+            if item.get("tax_included_price"):
+                set_value_com(ws, row, no_col + 8, to_number(item.get("tax_included_price")))
+        else:
+            set_value_com(ws, row, no_col + 6, amount)
+    return total
+
+
+def create_quote_with_excel_com(output: Path, payload: dict[str, Any], items: list[dict[str, Any]]) -> bool:
+    if win32com is None:
+        return False
+
+    excel = None
+    workbook = None
+    try:
+        excel = win32com.client.DispatchEx("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        workbook = excel.Workbooks.Open(str(output.resolve()))
+        ws = workbook.Worksheets(1)
+        header = find_header_com(ws)
+        if not header:
+            return False
+
+        header_row, no_col = header
+        clear_old_items_com(ws, header_row, no_col)
+        total = write_items_com(ws, header_row, no_col, items)
+        today = datetime.now().date().isoformat()
+        set_near_label_com(ws, LABEL_RECIPIENT, payload.get("customer") or "")
+        set_near_label_com(ws, LABEL_ATTENTION, payload.get("attention") or "")
+        set_near_label_com(ws, LABEL_QUOTE_TITLE, payload.get("title") or "")
+        set_near_label_com(ws, LABEL_QUOTE_DATE, today)
+        set_near_label_com(ws, LABEL_TOTAL, total)
+        workbook.Save()
+        return True
+    except Exception:
+        return False
+    finally:
+        if workbook is not None:
+            try:
+                workbook.Close(SaveChanges=True)
+            except Exception:
+                pass
+        if excel is not None:
+            try:
+                excel.Quit()
+            except Exception:
+                pass
+
+
 def create_quote(payload: dict[str, Any]) -> Path:
     items = payload.get("items") or []
     if not items:
@@ -200,6 +340,9 @@ def create_quote(payload: dict[str, Any]) -> Path:
     title = safe_filename(str(payload.get("title") or "quote"))
     output = EXPORT_ROOT / f"{now:%Y%m%d_%H%M%S}_{customer}_{title}.xlsx"
     shutil.copy2(template, output)
+
+    if create_quote_with_excel_com(output, payload, items):
+        return output
 
     wb = load_workbook(output)
     ws = wb.active

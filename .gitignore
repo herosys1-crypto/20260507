@@ -47,4 +47,4 @@ Thumbs.db
 data/raw_estimates/
 data/processed/
 data/exports/
-
+data/templates/*.xlsx

@@ -95,6 +95,18 @@ function score(row, tokens) {
   return total;
 }
 
+function queryGroups(query) {
+  return String(query || "")
+    .split(/[,|]+/)
+    .map((part) => normalize(part).split(" ").filter(Boolean))
+    .filter((tokens) => tokens.length);
+}
+
+function scoreQuery(row, groups) {
+  if (!groups.length) return 1;
+  return Math.max(...groups.map((tokens) => score(row, tokens)));
+}
+
 function json(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -170,7 +182,7 @@ function page(res) {
     h1 { margin: 0; font-size: 22px; }
     main {
       display: grid;
-      grid-template-columns: 300px minmax(0, 1fr) 390px;
+      grid-template-columns: 300px minmax(0, 1fr) 560px;
       min-height: calc(100vh - 62px);
     }
     aside, .draft {
@@ -271,27 +283,51 @@ function page(res) {
     .spec { min-width: 320px; max-width: 560px; line-height: 1.35; }
     .draft-list {
       display: grid;
-      gap: 8px;
-      max-height: 52vh;
+      gap: 5px;
+      max-height: 470px;
       overflow: auto;
       margin-top: 10px;
     }
     .draft-item {
+      display: grid;
+      grid-template-columns: minmax(150px, 1fr) 54px 86px 86px 42px;
+      gap: 6px;
+      align-items: start;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 6px;
       background: white;
-      padding: 10px;
+      padding: 6px;
     }
     .draft-item strong {
       display: block;
-      margin-bottom: 6px;
+      margin-bottom: 2px;
       line-height: 1.35;
+      font-size: 12px;
     }
-    .draft-grid {
+    .draft-head {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(150px, 1fr) 54px 86px 86px 42px;
+      gap: 6px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .draft-cell input {
+      height: 30px;
+      padding: 5px 6px;
+      font-size: 12px;
+    }
+    .draft-item button {
+      min-height: 30px;
+      padding: 0 7px;
+      font-size: 12px;
+    }
+    .bulk-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
       gap: 8px;
-      margin-top: 8px;
+      margin-top: 10px;
     }
     .draft-total {
       margin-top: 14px;
@@ -366,6 +402,12 @@ function page(res) {
       <input id="draftAttention" />
       <label id="draftTitleLabel" for="draftTitleInput"></label>
       <input id="draftTitleInput" />
+      <label id="bulkQtyLabel" for="bulkQty"></label>
+      <div class="bulk-row">
+        <input id="bulkQty" />
+        <button class="secondary" id="applyBulkQty"></button>
+      </div>
+      <div class="draft-head" id="draftHead"></div>
       <div class="draft-list" id="draftRows"></div>
       <div class="draft-total">
         <span class="hint" id="draftTotalLabel"></span>
@@ -384,7 +426,7 @@ function page(res) {
       title: "\\uac70\\ub798\\ucc98 \\uacac\\uc801\\uc11c",
       updated: "\\ub370\\uc774\\ud130 \\ud655\\uc778 \\uc911",
       qLabel: "\\uac80\\uc0c9\\uc5b4",
-      qPlaceholder: "\\uc608: 5060, 12400F \\ucf00\\uc774\\uc81c\\uc774\\uc528, \\ub9c8\\uc774\\ud06c\\ub860 1TB",
+      qPlaceholder: "\\uc608: 5060, 12400F \\ucf00\\uc774\\uc81c\\uc774\\uc528, \\ub9c8\\uc774\\ud06c\\ub860 1TB, 12700 z790",
       customerLabel: "\\uc5c5\\uccb4/\\ud3f4\\ub354",
       categoryLabel: "\\ud488\\ubaa9",
       all: "\\uc804\\uccb4",
@@ -415,9 +457,12 @@ function page(res) {
       customerName: "\\uc218\\uc2e0/\\uac70\\ub798\\ucc98",
       attentionName: "\\ucc38\\uc870",
       quoteTitle: "\\uacac\\uc801\\uba85",
+      bulkQty: "\\uc804\\uccb4 \\uc218\\ub7c9",
+      applyBulkQty: "\\uc801\\uc6a9",
       createQuote: "\\uacac\\uc801\\uc11c \\ud30c\\uc77c \\ub9cc\\ub4e4\\uae30",
       quoteCreated: "\\uacac\\uc801\\uc11c\\uac00 \\uc0dd\\uc131\\ub418\\uace0 \\uac80\\uc0c9 \\ub370\\uc774\\ud130\\uc5d0 \\ubc18\\uc601\\ub410\\uc2b5\\ub2c8\\ub2e4.",
       quoteCreateFailed: "\\uacac\\uc801\\uc11c \\uc0dd\\uc131\\uc5d0 \\uc2e4\\ud328\\ud588\\uc2b5\\ub2c8\\ub2e4.",
+      draftHeaders: ["\\ubd80\\ud488", "\\uc218\\ub7c9", "VAT incl", "VAT excl", ""],
       headers: ["\\uc120\\ud0dd", "\\uacac\\uc801\\uc77c", "\\uc5c5\\uccb4", "\\uc218\\uc2e0/\\ucc38\\uc870", "\\ud488\\ubaa9", "\\ubd80\\ud488\\uba85/\\uaddc\\uaca9", "\\uc218\\ub7c9", "\\ub2e8\\uac00", "\\uc6d0\\ubcf8"],
     };
 
@@ -439,6 +484,7 @@ function page(res) {
       draftCustomer: document.querySelector("#draftCustomer"),
       draftAttention: document.querySelector("#draftAttention"),
       draftTitleInput: document.querySelector("#draftTitleInput"),
+      bulkQty: document.querySelector("#bulkQty"),
       exportStatus: document.querySelector("#exportStatus"),
     };
     const money = new Intl.NumberFormat("ko-KR");
@@ -475,11 +521,14 @@ function page(res) {
       setText("draftCustomerLabel", T.customerName);
       setText("draftAttentionLabel", T.attentionName);
       setText("draftTitleLabel", T.quoteTitle);
+      setText("bulkQtyLabel", T.bulkQty);
+      setText("applyBulkQty", T.applyBulkQty);
       setText("draftTotalLabel", T.draftTotalLabel);
       setText("copyDraft", T.copyDraft);
       setText("createQuote", T.createQuote);
       setText("clearDraft", T.clearDraft);
       document.querySelector("#headRow").innerHTML = T.headers.map((text) => "<th>" + text + "</th>").join("");
+      document.querySelector("#draftHead").innerHTML = T.draftHeaders.map((text) => "<div>" + text + "</div>").join("");
     }
 
     function price(value) {
@@ -581,14 +630,11 @@ function page(res) {
         const node = document.createElement("div");
         node.className = "draft-item";
         node.innerHTML = [
-          "<strong>" + escapeHtml(item.category) + " · " + escapeHtml(item.spec) + "</strong>",
-          "<div class='hint'>" + escapeHtml(item.quoteDate) + " · " + escapeHtml(item.source) + "</div>",
-          "<div class='draft-grid'>",
-          "<label>Qty<input data-field='qty' data-index='" + index + "' value='" + item.qty + "'></label>",
-          "<label>VAT incl<input data-field='tax_included_price' data-index='" + index + "' value='" + (item.tax_included_price || Math.round(item.price * 1.1)) + "'></label>",
-          "<label>VAT excl<input data-field='price' data-index='" + index + "' value='" + item.price + "'></label>",
-          "</div>",
-          "<div class='actions'><button class='ghost' data-remove='" + index + "'>" + T.remove + "</button></div>",
+          "<div><strong>" + escapeHtml(item.category) + " · " + escapeHtml(item.spec) + "</strong><span class='hint'>" + escapeHtml(item.quoteDate) + " · " + escapeHtml(item.source) + "</span></div>",
+          "<div class='draft-cell'><input data-field='qty' data-index='" + index + "' value='" + item.qty + "'></div>",
+          "<div class='draft-cell'><input data-field='tax_included_price' data-index='" + index + "' value='" + (item.tax_included_price || Math.round(item.price * 1.1)) + "'></div>",
+          "<div class='draft-cell'><input data-field='price' data-index='" + index + "' value='" + item.price + "'></div>",
+          "<div><button class='ghost' data-remove='" + index + "'>" + T.remove + "</button></div>",
         ].join("");
         node.querySelectorAll("input").forEach((input) => {
           input.addEventListener("input", () => {
@@ -673,6 +719,15 @@ function page(res) {
       }
     }
 
+    function applyBulkQty() {
+      const qty = Number(els.bulkQty.value || 0);
+      if (!qty) return;
+      draft.forEach((item) => {
+        item.qty = qty;
+      });
+      renderDraft();
+    }
+
     setupText();
     document.querySelector("#search").addEventListener("click", search);
     document.querySelector("#reset").addEventListener("click", () => {
@@ -684,6 +739,7 @@ function page(res) {
     document.querySelector("#copyDraft").addEventListener("click", copyDraft);
     document.querySelector("#createQuote").addEventListener("click", createQuoteFile);
     document.querySelector("#refreshData").addEventListener("click", refreshData);
+    document.querySelector("#applyBulkQty").addEventListener("click", applyBulkQty);
     document.querySelector("#clearDraft").addEventListener("click", () => {
       draft.splice(0, draft.length);
       renderDraft();
@@ -711,10 +767,10 @@ function handleSearch(reqUrl, res) {
   const customer = reqUrl.searchParams.get("customer") || "";
   const category = reqUrl.searchParams.get("category") || "";
   const limit = Math.min(Number(reqUrl.searchParams.get("limit") || 30), 500);
-  const tokens = normalize(query).split(" ").filter(Boolean);
+  const groups = queryGroups(query);
 
   let rows = items
-    .map((row) => ({ ...row, _score: tokens.length ? score(row, tokens) : 1 }))
+    .map((row) => ({ ...row, _score: scoreQuery(row, groups) }))
     .filter((row) => row._score > 0)
     .filter((row) => !customer || row.customer_hint === customer)
     .filter((row) => !category || row.item_category === category);
