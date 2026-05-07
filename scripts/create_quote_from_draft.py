@@ -22,6 +22,7 @@ LABEL_ATTENTION = "\ucc38\uc870"
 LABEL_QUOTE_TITLE = "\uacac\uc801\uba85"
 LABEL_QUOTE_DATE = "\uc77c\uc790"
 LABEL_TOTAL = "\uc77c\uae08"
+VAT_SPLIT_LABEL = "\ubd80\uac00\uc138"
 
 
 def clean(value: Any) -> str:
@@ -51,14 +52,33 @@ def find_header(ws) -> tuple[int, int] | None:
     return None
 
 
-def find_template() -> Path:
+def workbook_has_vat_split(path: Path) -> bool:
+    try:
+        wb = load_workbook(path, read_only=True, data_only=True)
+        try:
+            for ws in wb.worksheets:
+                header = find_header(ws)
+                if header and has_vat_split_columns(ws, *header):
+                    return True
+        finally:
+            wb.close()
+    except Exception:
+        return False
+    return False
+
+
+def find_template(prefer_vat_split: bool = True) -> Path:
     explicit = PROJECT_ROOT / "data" / "templates" / "quote_template.xlsx"
     if explicit.exists():
         return explicit
 
-    for path in sorted(RAW_ROOT.rglob("*.xlsx")):
-        if path.name.startswith("~$"):
-            continue
+    paths = [path for path in sorted(RAW_ROOT.rglob("*.xlsx")) if not path.name.startswith("~$")]
+    if prefer_vat_split:
+        for path in paths:
+            if workbook_has_vat_split(path):
+                return path
+
+    for path in paths:
         try:
             wb = load_workbook(path, read_only=True, data_only=True)
             try:
@@ -91,7 +111,7 @@ def set_near_label(ws, label: str, value: Any, offset: int = 1) -> None:
 
 def clear_old_items(ws, header_row: int, no_col: int) -> None:
     for row in range(header_row + 1, min(ws.max_row, header_row + 80) + 1):
-        for col in range(no_col, no_col + 7):
+        for col in range(no_col, no_col + 10):
             cell = ws.cell(row, col)
             if not isinstance(cell, MergedCell):
                 cell.value = None
@@ -103,13 +123,47 @@ def set_value(ws, row: int, col: int, value: Any) -> None:
         cell.value = value
 
 
+def has_vat_split_columns(ws, header_row: int, no_col: int) -> bool:
+    header_text = " ".join(clean(ws.cell(header_row, col).value) for col in range(no_col, no_col + 10))
+    return VAT_SPLIT_LABEL in header_text
+
+
+def unit_price_from_item(item: dict[str, Any]) -> int:
+    if item.get("tax_excluded_price"):
+        return to_number(item.get("tax_excluded_price"))
+    if item.get("price"):
+        return to_number(item.get("price"))
+    if item.get("quoted_unit_price"):
+        return to_number(item.get("quoted_unit_price"))
+    if item.get("tax_included_price"):
+        return included_to_excluded(to_number(item.get("tax_included_price")), mode="nearest")
+    return 0
+
+
+def included_to_excluded(included_price: int, mode: str = "nearest", unit: int = 1000) -> int:
+    if included_price <= 0:
+        return 0
+    exact = included_price / 1.1
+    lower = int(exact // unit) * unit
+    upper = lower if lower == exact else lower + unit
+    if mode == "floor":
+        return lower
+    if mode == "ceil":
+        return upper
+    if abs((upper * 1.1) - included_price) < abs(included_price - (lower * 1.1)):
+        return upper
+    return lower
+
+
 def write_items(ws, header_row: int, no_col: int, items: list[dict[str, Any]]) -> int:
     total = 0
+    vat_split = has_vat_split_columns(ws, header_row, no_col)
     for index, item in enumerate(items, start=1):
         row = header_row + 1 + index
         qty = to_number(item.get("qty") or item.get("quantity") or 1)
-        price = to_number(item.get("price") or item.get("quoted_unit_price") or 0)
-        amount = qty * price
+        price = unit_price_from_item(item)
+        vat = int(round(price * 0.1))
+        amount = qty * (price + vat) if vat_split else qty * price
         total += amount
 
         set_value(ws, row, no_col, index)
@@ -118,7 +172,18 @@ def write_items(ws, header_row: int, no_col: int, items: list[dict[str, Any]]) -
         set_value(ws, row, no_col + 3, qty)
         set_value(ws, row, no_col + 4, item.get("unit") or "EA")
         set_value(ws, row, no_col + 5, price)
-        set_value(ws, row, no_col + 6, amount)
+        if vat_split:
+            set_value(ws, row, no_col + 6, f"={ws.cell(row, no_col + 5).coordinate}*0.1")
+            set_value(
+                ws,
+                row,
+                no_col + 7,
+                f"=({ws.cell(row, no_col + 5).coordinate}+{ws.cell(row, no_col + 6).coordinate})*{ws.cell(row, no_col + 3).coordinate}",
+            )
+            if item.get("tax_included_price"):
+                set_value(ws, row, no_col + 8, to_number(item.get("tax_included_price")))
+        else:
+            set_value(ws, row, no_col + 6, amount)
     return total
 
 
@@ -127,7 +192,7 @@ def create_quote(payload: dict[str, Any]) -> Path:
     if not items:
         raise SystemExit("Draft has no items.")
 
-    template = find_template()
+    template = find_template(prefer_vat_split=payload.get("tax_mode", "vat_split") == "vat_split")
     EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now()

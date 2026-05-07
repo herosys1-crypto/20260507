@@ -477,6 +477,14 @@ function page(res) {
       return number ? money.format(number) : "";
     }
 
+    function includedToExcluded(included, unit = 1000) {
+      const exact = Number(included || 0) / 1.1;
+      if (!exact) return 0;
+      const lower = Math.floor(exact / unit) * unit;
+      const upper = lower === exact ? lower : lower + unit;
+      return Math.abs(upper * 1.1 - included) < Math.abs(included - lower * 1.1) ? upper : lower;
+    }
+
     function escapeHtml(value) {
       return String(value || "").replace(/[&<>"']/g, (char) => ({
         "&": "&amp;",
@@ -540,12 +548,14 @@ function page(res) {
     }
 
     function addDraft(row) {
+      const basePrice = Number(row.quoted_unit_price || 0) || 0;
       draft.push({
         category: row.item_category || "",
         spec: row.spec || "",
         qty: Number(row.quantity || 1) || 1,
         unit: row.unit || "EA",
-        price: Number(row.quoted_unit_price || 0) || 0,
+        price: basePrice,
+        tax_included_price: Math.round(basePrice * 1.1),
         source: row.source_file || "",
         quoteDate: row.quote_date || "",
       });
@@ -556,7 +566,7 @@ function page(res) {
       els.draftRows.innerHTML = "";
       let total = 0;
       draft.forEach((item, index) => {
-        const amount = item.qty * item.price;
+        const amount = item.qty * (item.tax_included_price || Math.round(item.price * 1.1));
         total += amount;
         const node = document.createElement("div");
         node.className = "draft-item";
@@ -565,13 +575,22 @@ function page(res) {
           "<div class='hint'>" + escapeHtml(item.quoteDate) + " · " + escapeHtml(item.source) + "</div>",
           "<div class='draft-grid'>",
           "<label>Qty<input data-field='qty' data-index='" + index + "' value='" + item.qty + "'></label>",
-          "<label>Price<input data-field='price' data-index='" + index + "' value='" + item.price + "'></label>",
+          "<label>VAT incl<input data-field='tax_included_price' data-index='" + index + "' value='" + (item.tax_included_price || Math.round(item.price * 1.1)) + "'></label>",
+          "<label>VAT excl<input data-field='price' data-index='" + index + "' value='" + item.price + "'></label>",
           "</div>",
           "<div class='actions'><button class='ghost' data-remove='" + index + "'>" + T.remove + "</button></div>",
         ].join("");
         node.querySelectorAll("input").forEach((input) => {
           input.addEventListener("input", () => {
-            draft[Number(input.dataset.index)][input.dataset.field] = Number(input.value || 0);
+            const itemIndex = Number(input.dataset.index);
+            const field = input.dataset.field;
+            draft[itemIndex][field] = Number(input.value || 0);
+            if (field === "tax_included_price") {
+              draft[itemIndex].price = includedToExcluded(draft[itemIndex].tax_included_price);
+            }
+            if (field === "price") {
+              draft[itemIndex].tax_included_price = Math.round(draft[itemIndex].price * 1.1);
+            }
             renderDraft();
           });
         });
@@ -608,6 +627,7 @@ function page(res) {
         customer: els.draftCustomer.value,
         attention: els.draftAttention.value,
         title: els.draftTitleInput.value || T.draftTitle,
+        tax_mode: "vat_split",
         items: draft,
       };
       const res = await fetch("/api/export-draft", {
