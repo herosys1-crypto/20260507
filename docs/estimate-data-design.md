@@ -109,6 +109,7 @@ No. | 품 명 (Model) | 규 격 (Specification) | 수량 | 단위 | 단가 | 금
 ```text
 data/processed/estimate_items.csv
 data/processed/estimate_files.csv
+data/processed/estimate_search.xlsx
 ```
 
 ## 다음 단계
@@ -119,3 +120,32 @@ data/processed/estimate_files.csv
 4. 검색용 간단한 화면 또는 엑셀 출력 파일을 만든다.
 5. 신규 견적서 템플릿 자동 작성 기능을 만든다.
 
+## 현재 사용 방법
+
+원본 견적서를 다시 읽어 CSV를 재생성한다.
+
+```powershell
+python scripts\extract_estimate_items.py
+```
+
+검색용 엑셀 파일을 만든다.
+
+```powershell
+python scripts\build_estimate_search_workbook.py
+```
+
+터미널에서 바로 검색한다.
+
+```powershell
+python scripts\search_estimate_items.py 5060 --limit 20
+python scripts\search_estimate_items.py 12400F 케이제이씨 --limit 20
+python scripts\search_estimate_items.py 마이크론 1TB --limit 20
+```
+
+엑셀에서 검색하려면 아래 파일을 연다.
+
+```text
+data/processed/estimate_search.xlsx
+```
+
+`견적품목검색` 시트에서 `Ctrl+F` 또는 필터를 사용해 부품명, 업체명, 수신, 참조, 단가를 찾는다.
