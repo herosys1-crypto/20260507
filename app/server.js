@@ -144,19 +144,11 @@ function runPython(script, args) {
 }
 
 function openLocalFile(filePath) {
-  const script = [
-    "import os, sys",
-    "import win32com.client",
-    "path = os.path.abspath(sys.argv[1])",
-    "excel = win32com.client.Dispatch('Excel.Application')",
-    "excel.Visible = True",
-    "excel.Workbooks.Open(path)",
-    "print('opened')",
-  ].join("; ");
+  const script = path.join(ROOT, "scripts", "open_quote_file.py");
   return new Promise((resolve, reject) => {
     execFile(
       PYTHON_EXE,
-      ["-c", script, filePath],
+      [script, filePath],
       { windowsHide: true },
       (error) => {
         if (error) {
