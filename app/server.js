@@ -144,8 +144,34 @@ function runPython(script, args) {
 }
 
 function openLocalFile(filePath) {
+  const script = [
+    "import os, sys",
+    "import win32com.client",
+    "path = os.path.abspath(sys.argv[1])",
+    "excel = win32com.client.Dispatch('Excel.Application')",
+    "excel.Visible = True",
+    "excel.Workbooks.Open(path)",
+    "print('opened')",
+  ].join("; ");
   return new Promise((resolve, reject) => {
-    execFile("explorer.exe", [filePath], { windowsHide: true }, (error) => {
+    execFile(
+      PYTHON_EXE,
+      ["-c", script, filePath],
+      { windowsHide: true },
+      (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      },
+    );
+  });
+}
+
+function revealLocalFile(filePath) {
+  return new Promise((resolve, reject) => {
+    execFile("explorer.exe", [`/select,${filePath}`], { windowsHide: true }, (error) => {
       if (error) {
         reject(error);
         return;
@@ -900,7 +926,11 @@ async function handleOpenExport(req, res) {
       return;
     }
 
-    await openLocalFile(outputPath);
+    try {
+      await openLocalFile(outputPath);
+    } catch (error) {
+      await revealLocalFile(outputPath);
+    }
     json(res, 200, { ok: true, output: outputPath });
   } catch (error) {
     json(res, 500, { error: error.message || String(error) });
