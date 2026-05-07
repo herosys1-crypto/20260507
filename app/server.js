@@ -348,8 +348,6 @@ function page(res) {
     .part-grid {
       display: grid;
       gap: 4px;
-      max-height: 330px;
-      overflow: auto;
       padding: 6px;
       border: 1px solid var(--line);
       border-radius: 6px;
