@@ -99,10 +99,11 @@ No. | 품 명 (Model) | 규 격 (Specification) | 수량 | 단위 | 단가 | 금
 
 ## 1차 구현 범위
 
-1차는 `xlsx` 파일에서 품목 데이터를 추출한다.
+1차는 `xlsx`와 `xls` 파일에서 품목 데이터를 추출한다.
 
 - `.xlsx`: 자동 추출
-- `.xls`: 변환 또는 추가 라이브러리 확인 후 2차 처리
+- `.xls`: `xlrd`로 자동 추출
+- `.xlsm`, `.csv`: 필요 시 별도 처리
 
 결과 파일:
 
@@ -114,9 +115,9 @@ data/processed/estimate_search.xlsx
 
 ## 다음 단계
 
-1. `scripts/extract_estimate_items.py`로 `xlsx` 품목을 추출한다.
+1. `scripts/extract_estimate_items.py`로 `xlsx`와 `xls` 품목을 추출한다.
 2. 추출 결과를 확인해 잘못 읽힌 행을 보정한다.
-3. `.xls` 파일 변환 방식을 결정한다.
+3. 품목이 추출되지 않은 파일을 확인한다.
 4. 검색용 간단한 화면 또는 엑셀 출력 파일을 만든다.
 5. 신규 견적서 템플릿 자동 작성 기능을 만든다.
 

@@ -9,11 +9,17 @@ from typing import Any
 
 from openpyxl import load_workbook
 
+try:
+    import xlrd
+except ImportError:  # pragma: no cover - optional dependency for old .xls files.
+    xlrd = None
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_ROOT = PROJECT_ROOT / "data" / "raw_estimates"
 PROCESSED_ROOT = PROJECT_ROOT / "data" / "processed"
 CACHE_PATH = PROCESSED_ROOT / "estimate_extract_cache.json"
+CACHE_VERSION = 2
 
 LABEL_RECIPIENT = "\uc218\uc2e0"
 LABEL_ATTENTION = "\ucc38\uc870"
@@ -118,8 +124,10 @@ def make_file_record(path: Path, status: str = "ok", note: str = "", item_count:
 def load_cache() -> dict[str, Any]:
     if CACHE_PATH.exists():
         with CACHE_PATH.open("r", encoding="utf-8") as file:
-            return json.load(file)
-    return {"version": 1, "files": {}}
+            cache = json.load(file)
+        if cache.get("version") == CACHE_VERSION:
+            return cache
+    return {"version": CACHE_VERSION, "files": {}}
 
 
 def save_cache(cache: dict[str, Any]) -> None:
@@ -229,6 +237,120 @@ def extract_xlsx(path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
     return rows, file_record
 
 
+def xls_value(workbook, sheet, row: int, col: int) -> Any:
+    if row < 0 or col < 0 or row >= sheet.nrows or col >= sheet.ncols:
+        return None
+    cell = sheet.cell(row, col)
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        try:
+            return datetime(*xlrd.xldate_as_tuple(cell.value, workbook.datemode))
+        except Exception:
+            return cell.value
+    return cell.value
+
+
+def find_header_xls(sheet) -> tuple[int, int] | None:
+    for row in range(0, min(sheet.nrows, 60)):
+        for col in range(0, min(sheet.ncols, 20)):
+            if clean(sheet.cell_value(row, col)) == "No.":
+                return row, col
+    return None
+
+
+def find_label_value_xls(workbook, sheet, label: str, max_row: int = 20, max_col: int = 10) -> str:
+    normalized = label.replace(" ", "")
+    for row in range(0, min(sheet.nrows, max_row)):
+        for col in range(0, min(sheet.ncols, max_col)):
+            value = clean(xls_value(workbook, sheet, row, col)).replace(" ", "")
+            if value == normalized:
+                for offset in range(1, 3):
+                    candidate = clean(xls_value(workbook, sheet, row, col + offset))
+                    if candidate:
+                        return candidate
+    return ""
+
+
+def find_quote_date_xls(workbook, sheet) -> str:
+    for row in range(0, min(sheet.nrows, 20)):
+        for col in range(0, min(sheet.ncols, 10)):
+            value = clean(xls_value(workbook, sheet, row, col)).replace(" ", "")
+            if value in {LABEL_QUOTE_DATE, f"{LABEL_QUOTE_DATE}:"}:
+                for offset in range(1, 5):
+                    text = clean(xls_value(workbook, sheet, row, col + offset))
+                    if text:
+                        return text
+    return ""
+
+
+def extract_xls(path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    if xlrd is None:
+        return rows, make_file_record(path, status="unsupported_pending", note="Install xlrd to extract .xls files.")
+
+    rel_path = path.relative_to(RAW_ROOT)
+    folder_parts = rel_path.parts[:-1]
+    customer_hint = folder_parts[-1] if folder_parts else ""
+    file_record = make_file_record(path)
+
+    try:
+        workbook = xlrd.open_workbook(str(path))
+    except Exception as exc:
+        return rows, make_file_record(path, status="error", note=f"{type(exc).__name__}: {exc}")
+
+    for sheet in workbook.sheets():
+        header = find_header_xls(sheet)
+        if not header:
+            continue
+
+        header_row, no_col = header
+        recipient = find_label_value_xls(workbook, sheet, LABEL_RECIPIENT)
+        attention = find_label_value_xls(workbook, sheet, LABEL_ATTENTION)
+        quote_title = find_label_value_xls(workbook, sheet, LABEL_QUOTE_TITLE)
+        quote_date = find_quote_date_xls(workbook, sheet) or date_from_filename(path.name)
+
+        for row_num in range(header_row + 1, min(sheet.nrows, 300)):
+            item_no = clean(xls_value(workbook, sheet, row_num, no_col))
+            if item_no.endswith(".0"):
+                item_no = item_no[:-2]
+            item_category = clean(xls_value(workbook, sheet, row_num, no_col + 1))
+            spec = clean(xls_value(workbook, sheet, row_num, no_col + 2))
+            quantity = parse_number(xls_value(workbook, sheet, row_num, no_col + 3))
+            unit = clean(xls_value(workbook, sheet, row_num, no_col + 4))
+            unit_price = parse_number(xls_value(workbook, sheet, row_num, no_col + 5))
+            amount = parse_number(xls_value(workbook, sheet, row_num, no_col + 6))
+
+            if not item_no.isdigit() or (not item_category and not spec):
+                continue
+
+            rows.append(
+                {
+                    "source_path": str(rel_path),
+                    "source_file": path.name,
+                    "source_folder": "\\".join(folder_parts),
+                    "customer_hint": customer_hint,
+                    "quote_date": quote_date,
+                    "recipient": recipient,
+                    "attention": attention,
+                    "quote_title": quote_title,
+                    "sheet_name": sheet.name,
+                    "item_no": item_no,
+                    "item_category": item_category,
+                    "part_name": spec,
+                    "spec": spec,
+                    "quantity": quantity,
+                    "unit": unit,
+                    "quoted_unit_price": unit_price,
+                    "amount": amount,
+                    "normalized_part_key": normalize_key(item_category, spec),
+                }
+            )
+
+    status = "ok" if rows else "no_items"
+    file_record["status"] = status
+    file_record["item_count"] = str(len(rows))
+    return rows, file_record
+
+
 def get_cached(cache: dict[str, Any], path: Path) -> tuple[list[dict[str, str]], dict[str, str]] | None:
     rel_path = str(path.relative_to(RAW_ROOT))
     entry = cache.get("files", {}).get(rel_path)
@@ -262,12 +384,14 @@ def extract_path(path: Path, cache: dict[str, Any]) -> tuple[list[dict[str, str]
     suffix = path.suffix.lower()
     if suffix == ".xlsx":
         items, record = extract_xlsx(path)
-    elif suffix in {".xls", ".xlsm", ".csv"}:
+    elif suffix == ".xls":
+        items, record = extract_xls(path)
+    elif suffix in {".xlsm", ".csv"}:
         items = []
         record = make_file_record(
             path,
             status="unsupported_pending",
-            note="The first extraction pass handles .xlsx files only.",
+            note="This file type is pending extraction support.",
         )
     else:
         items = []
