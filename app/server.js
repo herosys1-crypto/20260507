@@ -189,14 +189,23 @@ function readBody(req) {
 
 function runPython(script, args) {
   return new Promise((resolve, reject) => {
-    execFile(PYTHON_EXE, [script, ...args], { cwd: ROOT, windowsHide: true }, (error, stdout, stderr) => {
+    execFile(
+      PYTHON_EXE,
+      [script, ...args],
+      {
+        cwd: ROOT,
+        windowsHide: true,
+        env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+      },
+      (error, stdout, stderr) => {
       if (error) {
         error.stderr = stderr;
         reject(error);
         return;
       }
       resolve(stdout);
-    });
+      },
+    );
   });
 }
 
@@ -978,14 +987,10 @@ function page(res) {
         els.exportStatus.textContent = T.quoteCreateFailed + " " + (data.error || "");
         return;
       }
-      els.exportStatus.textContent = T.quoteCreated + " " + data.output;
-      const openRes = await fetch("/api/open-export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ output: data.output }),
-      });
-      if (!openRes.ok) {
+      if (data.opened === false) {
         els.exportStatus.textContent = T.quoteOpenFailed + " " + data.output;
+      } else {
+        els.exportStatus.textContent = T.quoteCreated + " " + data.output;
       }
       await loadMeta();
     }
@@ -1121,6 +1126,15 @@ async function handleExportDraft(req, res) {
     const stdout = await runPython(script, [draftPath]);
 
     const result = JSON.parse(stdout.trim().split(/\r?\n/).pop() || "{}");
+    result.opened = false;
+    if (result.output) {
+      try {
+        await openLocalFile(result.output);
+        result.opened = true;
+      } catch (openError) {
+        result.openError = openError.message || String(openError);
+      }
+    }
     const updateScript = path.join(ROOT, "scripts", "update_estimate_database.py");
     await runPython(updateScript, []);
     result.updated = true;
