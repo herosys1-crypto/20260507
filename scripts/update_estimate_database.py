@@ -21,6 +21,7 @@ def main() -> None:
     if not RAW_ROOT.exists():
         raise SystemExit(f"원본 견적서 폴더가 없습니다: {RAW_ROOT}")
 
+    run_step("수동 투입 견적서 월별 정리", "organize_manual_inbox.py")
     run_step("견적서 원본에서 품목 데이터 추출", "extract_estimate_items.py")
     run_step("검색용 엑셀 파일 생성", "build_estimate_search_workbook.py")
 

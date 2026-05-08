@@ -623,7 +623,7 @@ function page(res) {
       limitLabel: "\\ud45c\\uc2dc \\uac1c\\uc218",
       search: "\\uac80\\uc0c9",
       reset: "\\ucd08\\uae30\\ud654",
-      usage: "\\uc9c1\\uc811 \\ub9cc\\ub4e0 \\uacac\\uc801\\uc11c\\ub294 data/raw_estimates/\\uacac\\uc801\\uc11c/\\uc5c5\\uccb4\\uba85 \\ud3f4\\ub354\\uc5d0 \\ub123\\uace0 \\ub370\\uc774\\ud130 \\uac31\\uc2e0\\uc744 \\ub204\\ub974\\uba74 \\uac80\\uc0c9\\uc5d0 \\ubc18\\uc601\\ub429\\ub2c8\\ub2e4.",
+      usage: "수동 견적서는 data/manual_inbox 폴더에 모두 넣고 데이터 갱신을 누르면 월별 폴더로 정리되어 검색에 반영됩니다.",
       refreshData: "\\ub370\\uc774\\ud130 \\uac31\\uc2e0",
       refreshing: "\\ub370\\uc774\\ud130\\ub97c \\uac31\\uc2e0\\ud558\\ub294 \\uc911\\uc785\\ub2c8\\ub2e4...",
       refreshed: "\\ub370\\uc774\\ud130 \\uac31\\uc2e0 \\uc644\\ub8cc",

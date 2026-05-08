@@ -47,4 +47,6 @@ Thumbs.db
 data/raw_estimates/
 data/processed/
 data/exports/
+data/manual_inbox/*
+!data/manual_inbox/.gitkeep
 data/templates/*.xlsx
