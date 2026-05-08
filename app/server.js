@@ -386,11 +386,34 @@ function page(res) {
       gap: 10px;
       margin-bottom: 10px;
     }
+    .result-groups {
+      display: grid;
+      gap: 12px;
+    }
+    .result-section {
+      border: 1px solid var(--line);
+      background: white;
+    }
+    .result-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      background: #edf4f5;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .result-head .hint { font-weight: 600; }
+    .result-scroll {
+      max-height: 286px;
+      overflow: auto;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
       background: white;
-      border: 1px solid var(--line);
       font-size: 13px;
     }
     th, td {
@@ -526,7 +549,7 @@ function page(res) {
       <label id="categoryLabel" for="category"></label>
       <select id="category"><option value="" id="allCategory"></option></select>
       <label id="limitLabel" for="limit"></label>
-      <select id="limit"><option>30</option><option>50</option><option>100</option><option>200</option></select>
+      <select id="limit"><option>100</option><option>300</option><option selected>500</option><option>1000</option></select>
       <div class="actions">
         <button id="search"></button>
         <button class="secondary" id="reset"></button>
@@ -548,10 +571,7 @@ function page(res) {
         <div><span class="pill" id="queryLabel"></span></div>
         <div class="hint" id="priceHint"></div>
       </div>
-      <table>
-        <thead><tr id="headRow"></tr></thead>
-        <tbody id="rows"></tbody>
-      </table>
+      <div class="result-groups" id="rows"></div>
     </section>
     <aside class="draft">
       <h2 id="draftTitle"></h2>
@@ -704,7 +724,6 @@ function page(res) {
       setText("supplyTotalLabel", T.supplyTotal);
       setText("vatTotalLabel", T.vatTotal);
       setText("includedTotalLabel", T.includedTotal);
-      document.querySelector("#headRow").innerHTML = T.headers.map((text) => "<th>" + text + "</th>").join("");
       document.querySelector("#draftHead").innerHTML = T.draftHeaders.map((text) => "<div>" + text + "</div>").join("");
     }
 
@@ -804,10 +823,51 @@ function page(res) {
       els.queryLabel.textContent = labelParts.length ? labelParts.join(" · ") : T.allData;
       els.rows.innerHTML = "";
 
-      data.rows.forEach((row, index) => {
+      const grouped = groupRows(data.rows, data.partFilters || []);
+      if (!grouped.length) {
+        els.rows.innerHTML = "<div class='hint'>검색 결과가 없습니다.</div>";
+        return;
+      }
+
+      grouped.forEach((group) => {
+        const section = document.createElement("div");
+        section.className = "result-section";
+        section.innerHTML = [
+          "<div class='result-head'><span>" + escapeHtml(group.label) + "</span><span class='hint'>최근순 " + money.format(group.rows.length) + "건</span></div>",
+          "<div class='result-scroll'><table><thead><tr>" + T.headers.map((text) => "<th>" + text + "</th>").join("") + "</tr></thead><tbody></tbody></table></div>",
+        ].join("");
+        const tbody = section.querySelector("tbody");
+        group.rows.forEach((row) => {
+          tbody.appendChild(resultRow(row));
+        });
+        els.rows.appendChild(section);
+      });
+    }
+
+    function groupRows(rows, partFilters) {
+      const partOrder = new Map(partFilters.map((item, index) => [item.label.toUpperCase(), index]));
+      const groups = new Map();
+      rows.forEach((row) => {
+        const label = row.item_category || "기타";
+        if (!groups.has(label)) groups.set(label, []);
+        groups.get(label).push(row);
+      });
+      return [...groups.entries()]
+        .map(([label, groupRows]) => ({ label, rows: groupRows }))
+        .sort((a, b) => {
+          const aKey = a.label.toUpperCase();
+          const bKey = b.label.toUpperCase();
+          const aOrder = partOrder.has(aKey) ? partOrder.get(aKey) : 999;
+          const bOrder = partOrder.has(bKey) ? partOrder.get(bKey) : 999;
+          if (aOrder !== bOrder) return aOrder - bOrder;
+          return a.label.localeCompare(b.label, "ko");
+        });
+    }
+
+    function resultRow(row) {
         const tr = document.createElement("tr");
         tr.innerHTML = [
-          "<td><button data-add='" + index + "'>" + T.add + "</button></td>",
+          "<td><button>" + T.add + "</button></td>",
           "<td>" + escapeHtml(row.quote_date) + "</td>",
           "<td>" + escapeHtml(row.item_category) + "</td>",
           "<td class='spec'>" + escapeHtml(row.spec) + "</td>",
@@ -818,8 +878,7 @@ function page(res) {
           "<td><span class='hint'>" + escapeHtml(row.source_file) + "</span></td>",
         ].join("");
         tr.querySelector("button").addEventListener("click", () => addDraft(row));
-        els.rows.appendChild(tr);
-      });
+        return tr;
     }
 
     function addDraft(row) {
@@ -1002,7 +1061,7 @@ function handleSearch(reqUrl, res) {
   const customer = reqUrl.searchParams.get("customer") || "";
   const partQueries = parsePartQueries(reqUrl.searchParams.get("parts"));
   const category = reqUrl.searchParams.get("category") || "";
-  const limit = Math.min(Number(reqUrl.searchParams.get("limit") || 30), 500);
+  const limit = Math.min(Number(reqUrl.searchParams.get("limit") || 500), 2000);
   const groups = queryGroups(query);
   const hasPartQueries = Object.keys(partQueries).length > 0;
   const partFilters = PART_FILTERS.map(({ value, label }) => ({ value, label }));
