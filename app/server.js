@@ -407,31 +407,35 @@ function page(res) {
     }
     .result-head .hint { font-weight: 600; }
     .result-scroll {
-      max-height: 286px;
+      max-height: 226px;
       overflow: auto;
     }
     table {
       width: 100%;
       border-collapse: collapse;
       background: white;
-      font-size: 13px;
+      font-size: 12px;
     }
     th, td {
       border-bottom: 1px solid #e7ecef;
-      padding: 8px;
+      padding: 4px 6px;
       text-align: left;
-      vertical-align: top;
+      vertical-align: middle;
     }
     th {
       position: sticky;
       top: 0;
       z-index: 1;
       background: #edf4f5;
-      font-size: 12px;
+      font-size: 11px;
     }
     tr:hover td { background: #f8fbfb; }
     .price, .qty { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-    .spec { min-width: 320px; max-width: 560px; line-height: 1.35; }
+    .spec {
+      min-width: 300px;
+      max-width: 560px;
+      line-height: 1.25;
+    }
     .draft-list {
       display: grid;
       gap: 4px;
@@ -653,7 +657,7 @@ function page(res) {
       quoteCreateFailed: "\\uacac\\uc801\\uc11c \\uc0dd\\uc131\\uc5d0 \\uc2e4\\ud328\\ud588\\uc2b5\\ub2c8\\ub2e4.",
       quoteOpenFailed: "\\ud30c\\uc77c\\uc740 \\uc0dd\\uc131\\ub410\\uc9c0\\ub9cc \\uc790\\ub3d9 \\uc5f4\\uae30\\ub294 \\uc2e4\\ud328\\ud588\\uc2b5\\ub2c8\\ub2e4.",
       draftHeaders: ["\\ubd80\\ud488", "\\uc218\\ub7c9", "VAT excl", "VAT incl", ""],
-      headers: ["\\uc120\\ud0dd", "\\ucd5c\\uadfc\\uacac\\uc801", "\\ud488\\ubaa9", "\\ubd80\\ud488\\uba85/\\uaddc\\uaca9", "VAT excl", "VAT incl", "\\uc218\\ub7c9", "\\uc5c5\\uccb4", "\\uc6d0\\ubcf8"],
+      headers: ["\\uc120\\ud0dd", "\\ucd5c\\uadfc\\uacac\\uc801", "\\ud488\\ubaa9", "\\ubd80\\ud488\\uba85/\\uaddc\\uaca9", "VAT excl", "VAT incl", "\\uc218\\ub7c9", "\\uc5c5\\uccb4"],
     };
 
     const els = {
@@ -875,7 +879,6 @@ function page(res) {
           "<td class='price'>" + price(vatIncluded(row.quoted_unit_price)) + "</td>",
           "<td class='qty'>" + escapeHtml(row.quantity) + "</td>",
           "<td>" + escapeHtml(row.customer_hint) + "<br><span class='hint'>" + escapeHtml(row.recipient || row.attention) + "</span></td>",
-          "<td><span class='hint'>" + escapeHtml(row.source_file) + "</span></td>",
         ].join("");
         tr.querySelector("button").addEventListener("click", () => addDraft(row));
         return tr;
